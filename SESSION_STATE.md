@@ -3,21 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.2 (Tamamlandı)
+Oturum: 1.3 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.2 — pkg/crypto AES-256-GCM + ilk testler
+- Oturum: 1.4 — pkg/socks5 server skeleton + testler
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/crypto/cipher.go → AES-256-GCM şifreleyici (önce test yaz!)
-2. pkg/crypto/cipher_test.go → TestEncryptDecrypt, TestTampering, BenchmarkEncrypt
-3. pkg/crypto/session.go → oturum anahtarı türetme (HKDF-SHA256)
-4. go mod tidy — golang.org/x/crypto eklenecek
-5. make test-race → başarılı olmalı
-6. pkg/socks5 server skeleton + temel testler
+1. pkg/socks5/server.go -> listener, auth-less SOCKS5 handshake skeleton
+2. pkg/socks5/server_test.go -> handshake parse testleri
+3. cmd/nabu-client entegrasyonu için local socks config bağlama
+4. make test-race ve go test ./... temiz
 ```
 
 ## Tamamlananlar
@@ -38,6 +36,10 @@ Oturum: 1.2 (Tamamlandı)
 - [x] Config kararları kodlandı: UDP/443, OCI Marseille, hybrid mode, WG compatible
 - [x] configs/client.yaml + configs/relay.yaml eklendi
 - [x] pkg/config: YAML load + validation eklendi
+- [x] pkg/crypto: AES-256-GCM Encrypt/Decrypt eklendi
+- [x] pkg/crypto: HKDF-SHA256 session key derivation eklendi
+- [x] pkg/crypto: NonceGenerator + concurrency testleri eklendi
+- [x] pkg/crypto testleri geçti
 
 ## Yarım Kalanlar
 - Yok (henüz kod yazılmadı)
