@@ -77,6 +77,25 @@ func (s *UDPServer) cleanupExpiredStreams(timeout time.Duration) {
 	})
 }
 
+// sendACKFrame sends an ACK frame for the given incoming sequence number.
+// Returns error if encoding or writing fails.
+func (s *UDPServer) sendACKFrame(streamID uint16, ackSeq uint32, addr net.Addr) error {
+	ackRaw, err := transport.EncodeFrame(transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagACK,
+		StreamID: streamID,
+		Seq:      0,
+		Ack:      ackSeq,
+	})
+	if err != nil {
+		return fmt.Errorf("ack encode failed: %w", err)
+	}
+	if _, err := s.conn.WriteTo(ackRaw, addr); err != nil {
+		return fmt.Errorf("ack write failed: %w", err)
+	}
+	return nil
+}
+
 func (s *UDPServer) Start(ctx context.Context) error {
 	pc, err := net.ListenPacket("udp", s.ListenAddr)
 	if err != nil {
@@ -135,20 +154,9 @@ func (s *UDPServer) Start(ctx context.Context) error {
 
 		s.Logger.Info("frame received", "remote", addr.String(), "stream", frame.StreamID, "seq", frame.Seq, "payload_bytes", len(frame.Payload))
 
-		// Send ACK frame (future: implement retransmit logic here based on state.RetryCount).
-		ackRaw, err := transport.EncodeFrame(transport.Frame{
-			Version:  transport.FrameVersion,
-			Flags:    transport.FlagACK,
-			StreamID: frame.StreamID,
-			Seq:      0,
-			Ack:      frame.Seq,
-		})
-		if err != nil {
-			s.Logger.Warn("ack frame encode failed", "error", err)
-			continue
-		}
-		if _, err := s.conn.WriteTo(ackRaw, addr); err != nil {
-			s.Logger.Warn("ack write failed", "remote", addr.String(), "error", err)
+		// Send ACK frame (future: implement retransmit logic based on state.RetryCount/MaxRetries).
+		if err := s.sendACKFrame(frame.StreamID, frame.Seq, addr); err != nil {
+			s.Logger.Warn("ack send failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
 		}
 	}
 }

@@ -87,6 +87,15 @@ func TestHandleConnWritesMethodSelection(t *testing.T) {
 		t.Fatalf("client write request failed: %v", err)
 	}
 
+	// Read server response (10-byte SOCKS5 response).
+	respBuf := make([]byte, 10)
+	if _, err := client.Read(respBuf); err != nil {
+		t.Fatalf("client read response failed: %v", err)
+	}
+	if respBuf[0] != Version5 || respBuf[1] != 0x00 {
+		t.Fatalf("unexpected socks5 response: %v", respBuf[:2])
+	}
+
 	if err := <-errCh; err != nil {
 		t.Fatalf("handle conn failed: %v", err)
 	}

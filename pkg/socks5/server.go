@@ -151,12 +151,24 @@ func (s *Server) HandleConn(conn net.Conn) error {
 		return fmt.Errorf("set request deadline failed: %w", err)
 	}
 
-	_, err = ReadRequest(r)
+	req, err := ReadRequest(r)
 	if err != nil {
 		return err
 	}
 
-	// Target connection and tunnel forwarding will be implemented in next step.
+	s.Logger.Info("socks5 request received", "remote", conn.RemoteAddr().String(), "host", req.Host, "port", req.Port)
+
+	// Send success response (0x05 0x00 = no error).
+	// Format: version=0x05, reply=0x00, reserved=0x00, addrtype, bindaddr (4), bindport (2)
+	respBuf := []byte{Version5, 0x00, 0x00, AddrTypeIPv4, 0, 0, 0, 0, 0, 0}
+	if _, err := conn.Write(respBuf); err != nil {
+		return fmt.Errorf("write socks5 response failed: %w", err)
+	}
+
+	// TODO: Forward request to relay transport layer
+	// 1. Create transport stream to relay
+	// 2. Pipe client conn ↔ relay stream
+	// 3. Handle graceful shutdown
 	return nil
 }
 
