@@ -3,19 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.4 (Tamamlandı)
+Oturum: 1.5 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.5 — pkg/transport UDP frame yapisi + testler
+- Oturum: 1.6 — relay/client arasında ilk UDP entegrasyon denemesi
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/transport/frame.go -> temel frame header/payload yapisi
-2. pkg/transport/frame_test.go -> encode/decode roundtrip testleri
-3. pkg/transport/udp_client.go -> hedef relay'e UDP write/read skeleton
-4. make test-race ve go test ./... temiz
+1. cmd/nabu-relay içine UDP socket listener skeleton ekle
+2. transport.UDPClient ile relay'e ilk frame gönder/al entegrasyonu
+3. relay tarafında frame decode loglama (geçici)
+4. integration test: client -> relay UDP frame roundtrip
 ```
 
 ## Tamamlananlar
@@ -44,6 +44,9 @@ Oturum: 1.4 (Tamamlandı)
 - [x] pkg/socks5: timeout, panic recovery, conn limit, context shutdown
 - [x] pkg/socks5 testleri geçti
 - [x] cmd/nabu-client: --serve-socks ile lokal socks5 başlatma eklendi
+- [x] pkg/transport: Frame encode/decode (header + payload)
+- [x] pkg/transport: UDPClient Connect/SendFrame/ReceiveFrame/Close eklendi
+- [x] pkg/transport testleri geçti
 
 ## Yarım Kalanlar
 - Yok (henüz kod yazılmadı)
