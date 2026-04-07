@@ -1,0 +1,39 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test output
+coverage.out
+coverage.html
+*.test
+
+# Go workspace
+go.work
+
+# Build artifacts
+dist/
+
+# Secrets / config
+configs/relay.yaml
+configs/client.yaml
+*.key
+*.pem
+*.crt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PCAP captures (test artifacts)
+test/dpi/*.pcap
+test/dpi/*.pcapng
+tools/pcap-analyzer/*.pcap
