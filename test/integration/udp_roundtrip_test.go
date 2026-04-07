@@ -28,6 +28,7 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new udp server failed: %v", err)
 	}
+	s.AllowPrivateTargets = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -40,6 +41,9 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 	// Give server a short moment to bind.
 	time.Sleep(120 * time.Millisecond)
 
+	echoAddr, cleanupEcho := startTCPEchoServer(t)
+	defer cleanupEcho()
+
 	c, err := transport.NewUDPClient(addr)
 	if err != nil {
 		t.Fatalf("new udp client failed: %v", err)
@@ -49,6 +53,25 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 		t.Fatalf("connect failed: %v", err)
 	}
 	defer c.Close()
+
+	connectFrame := transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagConnect,
+		StreamID: 7,
+		Seq:      100,
+		Payload:  []byte(echoAddr),
+	}
+	if err := c.SendFrame(connectFrame); err != nil {
+		t.Fatalf("send connect frame failed: %v", err)
+	}
+
+	connectAck, err := c.ReceiveFrame()
+	if err != nil {
+		t.Fatalf("receive connect ack failed: %v", err)
+	}
+	if connectAck.Flags != transport.FlagACK || connectAck.Ack != connectFrame.Seq {
+		t.Fatalf("unexpected connect ack: %+v", connectAck)
+	}
 
 	in := transport.Frame{
 		Version:  transport.FrameVersion,
@@ -63,12 +86,21 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 		if err := c.SendFrame(in); err != nil {
 			t.Fatalf("send frame failed: %v", err)
 		}
-		ack, err = c.ReceiveFrame()
-		if err == nil {
-			break
+		for j := 0; j < 3; j++ {
+			ack, err = c.ReceiveFrame()
+			if err != nil {
+				break
+			}
+			if ack.Flags == transport.FlagACK {
+				err = nil
+				break
+			}
 		}
 		if i == 2 {
 			t.Fatalf("receive ack failed after retries: %v", err)
+		}
+		if err == nil && ack.Flags == transport.FlagACK {
+			break
 		}
 	}
 	if ack.Flags != transport.FlagACK {

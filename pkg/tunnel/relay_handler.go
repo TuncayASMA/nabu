@@ -1,0 +1,212 @@
+package tunnel
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/TuncayASMA/nabu/pkg/socks5"
+	"github.com/TuncayASMA/nabu/pkg/transport"
+)
+
+const clientChunkSize = 1300
+
+const (
+	defaultAckTimeout = 1200 * time.Millisecond
+	maxSendRetries    = 3
+)
+
+var nextStreamID uint32
+
+func NewRelayHandler(relayAddr string) socks5.ConnHandler {
+	return func(conn net.Conn, req socks5.Request) error {
+		udpClient, err := transport.NewUDPClient(relayAddr)
+		if err != nil {
+			return fmt.Errorf("create udp client failed: %w", err)
+		}
+		defer udpClient.Close()
+
+		if err := udpClient.Connect(); err != nil {
+			return fmt.Errorf("connect udp client failed: %w", err)
+		}
+
+		streamID := uint16(atomic.AddUint32(&nextStreamID, 1))
+		connectSeq := uint32(1)
+		if err := udpClient.SendFrame(transport.Frame{
+			Version:  transport.FrameVersion,
+			Flags:    transport.FlagConnect,
+			StreamID: streamID,
+			Seq:      connectSeq,
+			Payload:  []byte(net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))),
+		}); err != nil {
+			return fmt.Errorf("send connect frame failed: %w", err)
+		}
+
+		prevReadTimeout := udpClient.ReadTimeout
+		udpClient.ReadTimeout = defaultAckTimeout
+		defer func() {
+			udpClient.ReadTimeout = prevReadTimeout
+		}()
+
+		if err := waitForAck(udpClient, streamID, connectSeq); err != nil {
+			return fmt.Errorf("wait for connect ack failed: %w", err)
+		}
+
+		resultCh := make(chan error, 2)
+		ackCh := make(chan uint32, 64)
+		var once sync.Once
+		shutdown := func(err error) {
+			once.Do(func() {
+				_ = udpClient.Close()
+				resultCh <- err
+			})
+		}
+
+		go pipeConnToRelay(conn, udpClient, streamID, ackCh, shutdown)
+		go pipeRelayToConn(conn, udpClient, streamID, ackCh, shutdown)
+
+		if err := <-resultCh; err != nil && err != io.EOF {
+			return err
+		}
+		return nil
+	}
+}
+
+func waitForAck(client *transport.UDPClient, streamID uint16, seq uint32) error {
+	for {
+		frame, err := client.ReceiveFrame()
+		if err != nil {
+			return err
+		}
+		if frame.StreamID != streamID {
+			continue
+		}
+		if frame.Flags&transport.FlagACK != 0 && frame.Ack == seq {
+			return nil
+		}
+		if frame.Flags&transport.FlagFIN != 0 {
+			return fmt.Errorf("relay closed stream during connect")
+		}
+	}
+}
+
+func sendFrameWithRetry(client *transport.UDPClient, frame transport.Frame, ackCh <-chan uint32) error {
+	backoff := 300 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < maxSendRetries; attempt++ {
+		if err := client.SendFrame(frame); err != nil {
+			lastErr = err
+			time.Sleep(backoff)
+			backoff = min(backoff*2, 4*time.Second)
+			continue
+		}
+
+		if err := waitForAckSeq(ackCh, frame.Seq, defaultAckTimeout+backoff); err != nil {
+			lastErr = err
+			backoff = min(backoff*2, 4*time.Second)
+			continue
+		}
+
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("send frame retry exhausted")
+	}
+	return lastErr
+}
+
+func waitForAckSeq(ackCh <-chan uint32, expectedSeq uint32, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case ackSeq := <-ackCh:
+			if ackSeq == expectedSeq {
+				return nil
+			}
+		case <-timer.C:
+			return fmt.Errorf("ack timeout for seq=%d", expectedSeq)
+		}
+	}
+}
+
+func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh <-chan uint32, shutdown func(error)) {
+	buf := make([]byte, clientChunkSize)
+	seq := uint32(2)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			payload := append([]byte(nil), buf[:n]...)
+			if sendErr := sendFrameWithRetry(client, transport.Frame{
+				Version:  transport.FrameVersion,
+				Flags:    transport.FlagData,
+				StreamID: streamID,
+				Seq:      seq,
+				Payload:  payload,
+			}, ackCh); sendErr != nil {
+				shutdown(fmt.Errorf("send data frame failed: %w", sendErr))
+				return
+			}
+			seq++
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				if sendErr := client.SendFrame(transport.Frame{
+					Version:  transport.FrameVersion,
+					Flags:    transport.FlagFIN,
+					StreamID: streamID,
+					Seq:      seq,
+				}); sendErr != nil {
+					shutdown(fmt.Errorf("send fin frame failed: %w", sendErr))
+					return
+				}
+			}
+			shutdown(err)
+			return
+		}
+	}
+}
+
+func pipeRelayToConn(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh chan<- uint32, shutdown func(error)) {
+	for {
+		frame, err := client.ReceiveFrame()
+		if err != nil {
+			shutdown(fmt.Errorf("receive relay frame failed: %w", err))
+			return
+		}
+		if frame.StreamID != streamID {
+			continue
+		}
+		if frame.Flags&transport.FlagACK != 0 {
+			ackCh <- frame.Ack
+			continue
+		}
+		if frame.Flags&transport.FlagFIN != 0 {
+			if err := client.SendFrame(transport.Frame{
+				Version:  transport.FrameVersion,
+				Flags:    transport.FlagACK,
+				StreamID: streamID,
+				Ack:      frame.Seq,
+			}); err != nil {
+				shutdown(fmt.Errorf("send fin ack failed: %w", err))
+				return
+			}
+			shutdown(nil)
+			return
+		}
+		if frame.Flags&transport.FlagData == 0 {
+			continue
+		}
+		if _, err := conn.Write(frame.Payload); err != nil {
+			shutdown(fmt.Errorf("write to socks connection failed: %w", err))
+			return
+		}
+	}
+}

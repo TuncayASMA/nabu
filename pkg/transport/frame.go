@@ -11,8 +11,10 @@ const (
 	HeaderSize   = 12
 	MaxPayload   = 64 * 1024
 
-	FlagData = 0x01
-	FlagACK  = 0x80
+	FlagData    = 0x01
+	FlagConnect = 0x02
+	FlagFIN     = 0x04
+	FlagACK     = 0x80
 )
 
 var (

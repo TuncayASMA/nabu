@@ -80,3 +80,22 @@ func TestDecodeRejectsOversizedPayload(t *testing.T) {
 		t.Fatalf("expected invalid payload len error, got=%v", err)
 	}
 }
+
+func TestFrameEncodeDecodeControlFlags(t *testing.T) {
+	tests := []byte{FlagConnect, FlagFIN}
+
+	for _, flags := range tests {
+		raw, err := EncodeFrame(Frame{Version: FrameVersion, Flags: flags, StreamID: 9, Seq: 3, Ack: 2, Payload: []byte("x")})
+		if err != nil {
+			t.Fatalf("encode failed for flags=%d: %v", flags, err)
+		}
+
+		out, err := DecodeFrame(raw)
+		if err != nil {
+			t.Fatalf("decode failed for flags=%d: %v", flags, err)
+		}
+		if out.Flags != flags {
+			t.Fatalf("unexpected flags: got=%d want=%d", out.Flags, flags)
+		}
+	}
+}

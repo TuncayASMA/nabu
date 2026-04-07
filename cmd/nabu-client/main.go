@@ -8,6 +8,7 @@ import (
 
 	"github.com/TuncayASMA/nabu/pkg/config"
 	"github.com/TuncayASMA/nabu/pkg/socks5"
+	"github.com/TuncayASMA/nabu/pkg/tunnel"
 	"github.com/TuncayASMA/nabu/pkg/version"
 )
 
@@ -80,6 +81,7 @@ func main() {
 	}
 
 	server := socks5.NewServer(cfg.Socks5.Listen)
+	server.OnConnect = tunnel.NewRelayHandler(fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port))
 	fmt.Printf("socks5 server dinliyor: %s\n", cfg.Socks5.Listen)
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "socks5 server hatasi: %v\n", err)

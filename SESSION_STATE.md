@@ -3,19 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.6 (Tamamlandı)
+Oturum: 1.8 (Devam ediyor)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.7 — client->relay UDP frame integration test
+- Oturum: 1.8 — UDP reliability katmani (ACK wait + retransmit + siralama)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. test/integration altında client->relay UDP roundtrip testi yaz
-2. transport.UDPClient ReceiveFrame için gerçek paket alma akışı doğrula
-3. relay tarafında basit ACK frame cevabı ekle
-4. cmd/nabu-client ve cmd/nabu-relay için demo run komutlarını güncelle
+1. client->relay data frame path icin ACK wait/retry stratejisi ekle
+2. seq bazli duplicate ve out-of-order frame davranisini tasarla
+3. relay tarafinda stream basina pencere/backpressure siniri ekle
+4. reliability akislarini integration testlerle dogrula
 ```
 
 ## Tamamlananlar
@@ -50,9 +50,27 @@ Oturum: 1.6 (Tamamlandı)
 - [x] pkg/relay: UDP listener skeleton eklendi
 - [x] cmd/nabu-relay: --serve-udp entegrasyonu eklendi
 - [x] relay paket testleri geçti
+- [x] pkg/relay: stream state timeout cleanup (sync.Map, 30s) eklendi
+- [x] pkg/relay: ACK helper refactor (sendACKFrame) tamamlandi
+- [x] pkg/socks5: CONNECT success response scaffold eklendi
+- [x] pkg/socks5: OnConnect hook ile relay forwarding baglandi
+- [x] pkg/tunnel: SOCKS5 CONNECT -> UDP relay bridge eklendi
+- [x] pkg/relay: CONNECT/DATA/FIN frame dispatch ile target TCP forwarding eklendi
+- [x] test/integration: SOCKS5 -> relay -> target echo testi eklendi
+- [x] Tüm Go testleri geçti (go test ./...)
+- [x] pkg/tunnel: stop-and-wait ACK wait/retry (max 3) eklendi
+- [x] pkg/tunnel: connect ACK timeout davranisi eklendi
+- [x] pkg/tunnel: FIN ve FIN-ACK send error handling eklendi
+- [x] pkg/tunnel testleri eklendi (ACK match + timeout)
 
 ## Yarım Kalanlar
-- Yok (henüz kod yazılmadı)
+- ACK bekleme/retransmit var; fakat adaptif backoff ve pencereleme henuz yok
+- Out-of-order / duplicate frame toleransi henuz yok
+- Rate limiting ve stream quota henuz yok
+
+## Reliability Notu (1.8)
+- ACK wait/retry artik var (stop-and-wait, tek outstanding frame)
+- Siralama/duplicate handling ve congestion-aware backoff bir sonraki adim
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
@@ -65,6 +83,7 @@ Oturum: 1.6 (Tamamlandı)
 - Her oturum 4-5 saat max — 3 saatte uyarı ver
 - tdd-guide agent: her yeni modülde önce test yaz
 - security-reviewer: kripto ve network kodu için ZORUNLU
+- Relay artik private/link-local hedefleri varsayilan olarak blokluyor; integration testler AllowPrivateTargets=true ile calisiyor
 
 ## Bağımlılık Durumu
  - Go: ✅ go1.26.1 linux/arm64 — /usr/local/go/bin/go

@@ -129,6 +129,60 @@ func TestHandleConnNoSupportedMethod(t *testing.T) {
 	}
 }
 
+func TestHandleConnCallsOnConnect(t *testing.T) {
+	s := NewServer(":0")
+	s.RequestTimeout = 200 * time.Millisecond
+
+	called := make(chan Request, 1)
+	s.OnConnect = func(conn net.Conn, req Request) error {
+		called <- req
+		return nil
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.HandleConn(server)
+	}()
+
+	if _, err := client.Write([]byte{Version5, 1, NoAuth}); err != nil {
+		t.Fatalf("client write failed: %v", err)
+	}
+
+	resp := make([]byte, 2)
+	if _, err := client.Read(resp); err != nil {
+		t.Fatalf("client read failed: %v", err)
+	}
+
+	domain := "example.com"
+	req := append([]byte{Version5, CmdConnect, 0x00, AddrTypeDomain, byte(len(domain))}, []byte(domain)...)
+	req = append(req, 0x01, 0xBB)
+	if _, err := client.Write(req); err != nil {
+		t.Fatalf("client write request failed: %v", err)
+	}
+
+	respBuf := make([]byte, 10)
+	if _, err := client.Read(respBuf); err != nil {
+		t.Fatalf("client read response failed: %v", err)
+	}
+
+	select {
+	case got := <-called:
+		if got.Host != domain || got.Port != 443 {
+			t.Fatalf("unexpected request: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("on connect callback was not called")
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("handle conn failed: %v", err)
+	}
+}
+
 func TestReadRequestIPv4Connect(t *testing.T) {
 	// VER=5, CMD=CONNECT, RSV=0, ATYP=IPv4, DST=1.2.3.4, PORT=443
 	input := []byte{Version5, CmdConnect, 0x00, AddrTypeIPv4, 1, 2, 3, 4, 0x01, 0xBB}

@@ -45,12 +45,15 @@ type Request struct {
 	Port    uint16
 }
 
+type ConnHandler func(conn net.Conn, req Request) error
+
 type Server struct {
 	ListenAddr       string
 	MaxConns         int
 	HandshakeTimeout time.Duration
 	RequestTimeout   time.Duration
 	Logger           *slog.Logger
+	OnConnect        ConnHandler
 
 	connSem chan struct{}
 }
@@ -165,10 +168,16 @@ func (s *Server) HandleConn(conn net.Conn) error {
 		return fmt.Errorf("write socks5 response failed: %w", err)
 	}
 
-	// TODO: Forward request to relay transport layer
-	// 1. Create transport stream to relay
-	// 2. Pipe client conn ↔ relay stream
-	// 3. Handle graceful shutdown
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("clear connection deadline failed: %w", err)
+	}
+
+	if s.OnConnect != nil {
+		if err := s.OnConnect(conn, req); err != nil {
+			return fmt.Errorf("connect handler failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
