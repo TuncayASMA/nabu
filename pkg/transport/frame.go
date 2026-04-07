@@ -10,6 +10,9 @@ const (
 	FrameVersion = 1
 	HeaderSize   = 12
 	MaxPayload   = 64 * 1024
+
+	FlagData = 0x01
+	FlagACK  = 0x80
 )
 
 var (

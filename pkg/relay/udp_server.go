@@ -66,5 +66,20 @@ func (s *UDPServer) Start(ctx context.Context) error {
 		}
 
 		s.Logger.Info("frame received", "remote", addr.String(), "stream", frame.StreamID, "seq", frame.Seq, "payload_bytes", len(frame.Payload))
+
+		ackRaw, err := transport.EncodeFrame(transport.Frame{
+			Version:  transport.FrameVersion,
+			Flags:    transport.FlagACK,
+			StreamID: frame.StreamID,
+			Seq:      0,
+			Ack:      frame.Seq,
+		})
+		if err != nil {
+			s.Logger.Warn("ack frame encode failed", "error", err)
+			continue
+		}
+		if _, err := s.conn.WriteTo(ackRaw, addr); err != nil {
+			s.Logger.Warn("ack write failed", "remote", addr.String(), "error", err)
+		}
 	}
 }
