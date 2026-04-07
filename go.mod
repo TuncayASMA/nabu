@@ -1,6 +1,6 @@
 module github.com/TuncayASMA/nabu
 
-go 1.26.1
+go 1.25.0
 
 require (
 	golang.org/x/crypto v0.49.0
