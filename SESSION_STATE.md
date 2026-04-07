@@ -3,19 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.5 (Tamamlandı)
+Oturum: 1.6 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.6 — relay/client arasında ilk UDP entegrasyon denemesi
+- Oturum: 1.7 — client->relay UDP frame integration test
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. cmd/nabu-relay içine UDP socket listener skeleton ekle
-2. transport.UDPClient ile relay'e ilk frame gönder/al entegrasyonu
-3. relay tarafında frame decode loglama (geçici)
-4. integration test: client -> relay UDP frame roundtrip
+1. test/integration altında client->relay UDP roundtrip testi yaz
+2. transport.UDPClient ReceiveFrame için gerçek paket alma akışı doğrula
+3. relay tarafında basit ACK frame cevabı ekle
+4. cmd/nabu-client ve cmd/nabu-relay için demo run komutlarını güncelle
 ```
 
 ## Tamamlananlar
@@ -47,6 +47,9 @@ Oturum: 1.5 (Tamamlandı)
 - [x] pkg/transport: Frame encode/decode (header + payload)
 - [x] pkg/transport: UDPClient Connect/SendFrame/ReceiveFrame/Close eklendi
 - [x] pkg/transport testleri geçti
+- [x] pkg/relay: UDP listener skeleton eklendi
+- [x] cmd/nabu-relay: --serve-udp entegrasyonu eklendi
+- [x] relay paket testleri geçti
 
 ## Yarım Kalanlar
 - Yok (henüz kod yazılmadı)

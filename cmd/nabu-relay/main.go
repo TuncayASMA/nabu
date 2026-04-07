@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/TuncayASMA/nabu/pkg/config"
+	"github.com/TuncayASMA/nabu/pkg/relay"
 	"github.com/TuncayASMA/nabu/pkg/version"
 )
 
@@ -16,6 +20,7 @@ func main() {
 	region := flag.String("region", config.DefaultDemoRelayRegion, "Relay lokasyonu")
 	configPath := flag.String("config", config.DefaultRelayConfigPath, "Relay config dosya yolu")
 	wgCompatible := flag.Bool("wg-compatible", true, "WireGuard istemcileriyle uyumlu UDP iletim davranisi")
+	serveUDP := flag.Bool("serve-udp", true, "UDP relay listener baslat")
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -59,4 +64,22 @@ func main() {
 		*configPath,
 		cfg.Security.WGCompatible,
 	)
+
+	if !*serveUDP {
+		return
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	udpServer, err := relay.NewUDPServer(cfg.Listen, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "udp relay olusturulamadi: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := udpServer.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "udp relay hatasi: %v\n", err)
+		os.Exit(1)
+	}
 }
