@@ -3,10 +3,24 @@
 [![CI](https://github.com/TuncayASMA/nabu/actions/workflows/ci.yml/badge.svg)](https://github.com/TuncayASMA/nabu/actions)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
+![NABU Hero](docs/assets/nabu-hero.svg)
+
 > **⚠️ Geliştirme aşamasında — henüz production kullanımı için hazır değil.**
 
-NABU, derin paket inceleme (DPI) sistemlerini atlayan, UDP/QUIC tabanlı, açık kaynaklı bir tünel protokolüdür.  
-Türkiye, Pakistan, Mısır ve benzer Sandvine altyapısı kullanan ülkelerdeki internet sansürünü aşmak için tasarlanmıştır.
+NABU, DPI tabanlı engellemelere karşı UDP/QUIC kullanan açık kaynak bir tünel projesidir.
+
+## Proje Amacı
+
+- Sansürlü ağlarda güvenilir bağlantı sağlamak
+- Trafiği gerçek internet davranışına benzeterek engel riskini düşürmek
+- Topluluk tarafından geliştirilebilen, denetlenebilir bir altyapı sunmak
+
+## Ne Yapacak?
+
+- Yerelde SOCKS5 endpoint sunarak uygulamaları tünele bağlayacak
+- Relay üzerinden şifreli UDP taşıma yapacak
+- DNS sızıntısını önlemek için güvenli DNS taşıma modları sunacak
+- İlerleyen fazlarda DPI tepki analizi ve çok yollu taşıma ekleyecek
 
 ## Özellikler (Yol Haritası)
 
@@ -26,16 +40,21 @@ go install github.com/TuncayASMA/nabu/cmd/nabu-client@latest
 
 ## Varsayılan Kararlar
 
-- Relay varsayilan UDP portu: `443`
+- Relay varsayılan UDP portu: `443`
 - İlk demo relay lokasyonu: `OCI Marseille (fr-mrs-1)`
 - İstemci konfig modeli: `hybrid` (dosya + CLI override)
 - WireGuard uyumluluğu: açık (`--wg-compatible=true`)
 - Org planı: şimdilik `TuncayASMA/nabu`, ilk dış katkı + 2 maintainer sonrasında `nabu-tunnel` org'a taşınacak
 
+## Ne Kadar Detay Yeterli?
+
+GitHub ana sayfasında kısa ve net bilgi yeterlidir.
+Operasyonel ayrıntılar (sunucu topolojisi, saldırı modeli, test metodolojisi) için ayrı dokümanlar kullanılmalıdır.
+
 ## Derleme
 
 ```bash
-git clone https://github.com/nabu-tunnel/nabu
+git clone https://github.com/TuncayASMA/nabu
 cd nabu
 make build
 

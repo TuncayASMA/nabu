@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-label="NABU Hero Banner">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0b132b"/>
+      <stop offset="100%" stop-color="#1c2541"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#2af598"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="420" fill="url(#bg)"/>
+
+  <g opacity="0.28" stroke="#5bc0be" stroke-width="1" fill="none">
+    <path d="M0 80 C200 20, 380 140, 600 80 S1000 20, 1200 80"/>
+    <path d="M0 150 C240 100, 420 220, 640 150 S1000 90, 1200 150"/>
+    <path d="M0 220 C180 170, 420 290, 650 220 S1020 150, 1200 220"/>
+    <path d="M0 290 C220 240, 420 360, 670 290 S1000 240, 1200 290"/>
+  </g>
+
+  <g>
+    <rect x="92" y="72" width="198" height="36" rx="18" fill="rgba(255,255,255,0.08)"/>
+    <text x="191" y="96" text-anchor="middle" fill="#e0fbfc" font-family="Segoe UI, Ubuntu, sans-serif" font-size="18">OPEN SOURCE</text>
+  </g>
+
+  <text x="90" y="190" fill="#ffffff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="82" font-weight="700">NABU</text>
+  <rect x="92" y="210" width="420" height="7" rx="4" fill="url(#accent)"/>
+  <text x="90" y="260" fill="#d9f0ff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="32">UDP-based Anti-DPI Tunnel</text>
+  <text x="90" y="304" fill="#b7c7e0" font-family="Segoe UI, Ubuntu, sans-serif" font-size="24">Privacy, resilience, and censorship resistance</text>
+
+  <g transform="translate(820,68)">
+    <rect x="0" y="0" width="290" height="280" rx="20" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.14)"/>
+    <text x="24" y="48" fill="#c7f9ff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="20">Default Profile</text>
+    <text x="24" y="92" fill="#ffffff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="18">Relay: UDP/443</text>
+    <text x="24" y="124" fill="#ffffff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="18">Region: OCI Marseille</text>
+    <text x="24" y="156" fill="#ffffff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="18">Mode: Hybrid config</text>
+    <text x="24" y="188" fill="#ffffff" font-family="Segoe UI, Ubuntu, sans-serif" font-size="18">WireGuard: Compatible</text>
+    <rect x="24" y="214" width="242" height="2" fill="rgba(255,255,255,0.22)"/>
+    <text x="24" y="248" fill="#9deac8" font-family="Segoe UI, Ubuntu, sans-serif" font-size="16">AGPL-3.0</text>
+  </g>
+</svg>
