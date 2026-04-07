@@ -3,19 +3,20 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.8 (Devam ediyor)
+Oturum: 1.9 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.8 — UDP reliability katmani (ACK wait + retransmit + siralama)
+- Oturum: 1.9 — Reliability katmanı tamamlandı (reorder buf + backpressure + exponential backoff)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. client->relay data frame path icin ACK wait/retry stratejisi ekle
-2. seq bazli duplicate ve out-of-order frame davranisini tasarla
-3. relay tarafinda stream basina pencere/backpressure siniri ekle
-4. reliability akislarini integration testlerle dogrula
+1. pkg/crypto: Handshake protokolü — istemci/relay ephemeral key exchange (X25519 veya ECDH)
+2. pkg/crypto: session key türetme handshake akışına bağla (HKDF zaten var)
+3. pkg/transport: Frame'lere şifreleme katmanı ekle (Encrypt/Decrypt her frame)
+4. cmd/nabu-client + cmd/nabu-relay: --psk veya --key-file parametresi
+5. Şifreli end-to-end tüneli integration testiyle doğrula
 ```
 
 ## Tamamlananlar
@@ -62,15 +63,25 @@ Oturum: 1.8 (Devam ediyor)
 - [x] pkg/tunnel: connect ACK timeout davranisi eklendi
 - [x] pkg/tunnel: FIN ve FIN-ACK send error handling eklendi
 - [x] pkg/tunnel testleri eklendi (ACK match + timeout)
+- [x] pkg/relay: StreamState → NextExpectedSeq + reorderBuf (cap 64) + maxBufFrames
+- [x] pkg/relay: handleDataFrame → tam OOO/duplicate/backpressure mantığı
+- [x] pkg/relay: 4 yeni unit test (init, buffer, drain, backpressure)
+- [x] pkg/tunnel: sendFrameWithRetry → exponential backoff (300ms → 4s)
+- [x] test/integration: reliability_test.go — TestDuplicateDataFrameIsIgnored PASS
+- [x] test/integration: TestOutOfOrderDataFrameDeliveredInOrder PASS
+- [x] git commit f9c13ff + push → main
 
 ## Yarım Kalanlar
-- ACK bekleme/retransmit var; fakat adaptif backoff ve pencereleme henuz yok
-- Out-of-order / duplicate frame toleransi henuz yok
-- Rate limiting ve stream quota henuz yok
+- Şifreleme katmanı henüz transport'a entegre değil (crypto paketi hazır, wire'a bağlanmadı)
+- Handshake (key exchange) protokolü henüz yok
+- Rate limiting ve per-source quota henüz yok
+- Congestion-aware backoff (RTT ölçümü) henüz yok
 
-## Reliability Notu (1.8)
-- ACK wait/retry artik var (stop-and-wait, tek outstanding frame)
-- Siralama/duplicate handling ve congestion-aware backoff bir sonraki adim
+## Reliability Notu (1.9)
+- Stop-and-wait ACK: tamamlandı
+- Reorder buffer (OOO + duplicate): tamamlandı, integration testleri geçiyor
+- Backpressure (max 64 frame/stream): tamamlandı
+- Exponential backoff (300ms → 4s): tamamlandı
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
