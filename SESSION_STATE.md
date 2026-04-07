@@ -3,18 +3,18 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-07
-Oturum: 1.3 (Tamamlandı)
+Oturum: 1.4 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.4 — pkg/socks5 server skeleton + testler
+- Oturum: 1.5 — pkg/transport UDP frame yapisi + testler
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/socks5/server.go -> listener, auth-less SOCKS5 handshake skeleton
-2. pkg/socks5/server_test.go -> handshake parse testleri
-3. cmd/nabu-client entegrasyonu için local socks config bağlama
+1. pkg/transport/frame.go -> temel frame header/payload yapisi
+2. pkg/transport/frame_test.go -> encode/decode roundtrip testleri
+3. pkg/transport/udp_client.go -> hedef relay'e UDP write/read skeleton
 4. make test-race ve go test ./... temiz
 ```
 
@@ -40,6 +40,10 @@ Oturum: 1.3 (Tamamlandı)
 - [x] pkg/crypto: HKDF-SHA256 session key derivation eklendi
 - [x] pkg/crypto: NonceGenerator + concurrency testleri eklendi
 - [x] pkg/crypto testleri geçti
+- [x] pkg/socks5: handshake + request parsing (IPv4/IPv6/domain)
+- [x] pkg/socks5: timeout, panic recovery, conn limit, context shutdown
+- [x] pkg/socks5 testleri geçti
+- [x] cmd/nabu-client: --serve-socks ile lokal socks5 başlatma eklendi
 
 ## Yarım Kalanlar
 - Yok (henüz kod yazılmadı)

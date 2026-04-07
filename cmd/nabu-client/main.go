@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/TuncayASMA/nabu/pkg/config"
+	"github.com/TuncayASMA/nabu/pkg/socks5"
 	"github.com/TuncayASMA/nabu/pkg/version"
 )
 
@@ -16,6 +17,7 @@ func main() {
 	relayHost := flag.String("relay-host", config.DefaultDemoRelayHost, "Demo relay host")
 	relayPort := flag.Int("relay-port", config.DefaultDemoRelayPort, "Demo relay UDP port")
 	socksListen := flag.String("socks-listen", "127.0.0.1:1080", "SOCKS5 dinleme adresi")
+	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
 	flag.Parse()
 
@@ -72,4 +74,15 @@ func main() {
 		*configPath,
 		cfg.Mode.ConfigMode,
 	)
+
+	if !*serveSocks {
+		return
+	}
+
+	server := socks5.NewServer(cfg.Socks5.Listen)
+	fmt.Printf("socks5 server dinliyor: %s\n", cfg.Socks5.Listen)
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "socks5 server hatasi: %v\n", err)
+		os.Exit(1)
+	}
 }
