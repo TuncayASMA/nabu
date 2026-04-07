@@ -1,6 +1,6 @@
 # NABU — UDP Tabanlı Anti-DPI Tünel
 
-[![CI](https://github.com/nabu-tunnel/nabu/actions/workflows/ci.yml/badge.svg)](https://github.com/nabu-tunnel/nabu/actions)
+[![CI](https://github.com/TuncayASMA/nabu/actions/workflows/ci.yml/badge.svg)](https://github.com/TuncayASMA/nabu/actions)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
 > **⚠️ Geliştirme aşamasında — henüz production kullanımı için hazır değil.**
@@ -21,8 +21,16 @@ Türkiye, Pakistan, Mısır ve benzer Sandvine altyapısı kullanan ülkelerdeki
 
 ```bash
 # Henüz hazır değil — geliştirme devam ediyor
-go install github.com/nabu-tunnel/nabu/cmd/nabu-client@latest
+go install github.com/TuncayASMA/nabu/cmd/nabu-client@latest
 ```
+
+## Varsayılan Kararlar
+
+- Relay varsayilan UDP portu: `443`
+- İlk demo relay lokasyonu: `OCI Marseille (fr-mrs-1)`
+- İstemci konfig modeli: `hybrid` (dosya + CLI override)
+- WireGuard uyumluluğu: açık (`--wg-compatible=true`)
+- Org planı: şimdilik `TuncayASMA/nabu`, ilk dış katkı + 2 maintainer sonrasında `nabu-tunnel` org'a taşınacak
 
 ## Derleme
 
