@@ -3,19 +3,23 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.20 (Tamamlandı)
+Oturum: 1.21 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — Obfuscation Layer
 - Sprint: 2 — Faz 2 Bootstrap
-- Oturum: 1.20 → Sonraki: 1.21 (pkg/obfuscation HTTP CONNECT wrapper)
+- Oturum: 1.21 → Sonraki: 1.22 (Relay TCP listener — HTTPConnect karşı tarafı)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.21 — Faz 2 Obfuscation Skeleton:
-1. pkg/obfuscation/http_connect.go — transport.Layer impl (HTTP CONNECT camouflage)
-2. cmd/nabu-client: --obfuscation flag (none | http-connect)
-3. Integration test: HTTP CONNECT obfuscated tunnel echo
+Oturum 1.22 — Relay TCP Listener (HTTPConnect karşı tarafı):
+1. pkg/relay/tcp_server.go — TCP üzerinden length-prefix frame listener
+   - net.Listener (TCP), HTTP CONNECT handshake kabul (opsiyonel)
+   - Aynı dispatch/forwarding mantığı UDPServer ile paylaştır
+2. cmd/nabu-relay/main.go: --serve-tcp ve --tcp-addr flag'leri
+3. test/integration: HTTP CONNECT obfuscated uçtan uca echo testi
+   - HTTPConnect client → TCP relay → hedef echo sunucu
+4. PROTOCOL.md v1.2: §12 TCP Transport (length-prefix framing)
 ```
 
 ## Tamamlananlar
@@ -131,9 +135,26 @@ Oturum 1.21 — Faz 2 Obfuscation Skeleton:
 - [x] pkg/relay/stats_handler_test.go: 5 unit test (JSON, Prometheus via Accept/param, default, zero)
 - [x] cmd/nabu-relay/main.go: --stats-addr flag, /metrics + /stats endpoints, graceful shutdown
 - [x] git commit 55978f3 (Oturum 1.20)
+- [x] pkg/transport/layer.go: SessionKeySetter interface eklendi (eksik tespit edildi)
+- [x] pkg/obfuscation/http_connect.go: HTTPConnect — transport.Layer impl
+  - TCP üzerinden 4-byte length-prefix frame (SendFrame/ReceiveFrame)
+  - Opsiyonel HTTP CONNECT proxy (ProxyAddr boşsa direkt TCP)
+  - SetReadTimeout + SetSessionKey interface desteği
+  - Compile-time assertions (transport.Layer, ReadTimeoutSetter, SessionKeySetter)
+- [x] pkg/obfuscation/crypto.go: pkg/crypto için ince yerel sarmalayıcılar
+- [x] pkg/obfuscation/factory.go: NewLayer(mode, relayAddr, proxyAddr) — none|http-connect
+- [x] pkg/obfuscation/*_test.go: 12 birim testi (8 HTTPConnect + 4 factory)
+- [x] pkg/tunnel/relay_handler.go: NewRelayHandlerWithLayer() eklendi
+  - NewRelayHandler() → thin wrapper (UDP fallback korundu)
+  - layer!=nil ise pre-built layer kullanılır (obfuscation için)
+- [x] cmd/nabu-client/main.go: --obfuscation ve --obfs-proxy flag'leri eklendi
+- [x] Tüm testler geçti (go test -race ./...) — 8 paket + integration
+- [x] golangci-lint clean
+- [x] git commit 98dcb72 (Oturum 1.21)
 
 ## Yarım Kalanlar
-- Faz 2 obfuscation layer henüz başlamadı (pkg/obfuscation boş)
+- Relay TCP listener henüz yok (HTTPConnect client için karşı taraf) → Oturum 1.22
+- Integration test: HTTPConnect client → TCP relay → hedef echo → Oturum 1.22
 - Per-stream stats (bytes_in/out per streamID) — GlobalStats sadece server-wide
 - Anti-replay window (Faz 2 güvenlik iyileştirmesi)
 
