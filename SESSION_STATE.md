@@ -3,31 +3,27 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-09
-Oturum: 1.24 (Tamamlandı)
+Oturum: 1.25 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8 — TCP/HTTPConnect/TLS Obfuscation (RUNBOOK Sprint 8 karşılığı)
+- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket Obfuscation
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
-  - 🔜 WebSocket obfuscation veya relay TLS cert pinning (Oturum 1.25)
-- Oturum: 1.24 → Sonraki: 1.25 (WebSocket obfuscation veya relay TLS cert pinning)
+  - ✅ WebSocket obfuscation RFC 6455 (Oturum 1.25)
+  - 🔜 uTLS Chrome fingerprint (Oturum 1.26)
+- Oturum: 1.25 → Sonraki: 1.26 (uTLS Chrome fingerprint)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.25 — WebSocket obfuscation veya relay TLS cert pinning:
-Seçenek A — WebSocket obfuscation:
-1. pkg/obfuscation/websocket.go: transport.Layer impl; HTTP Upgrade + WS frame wrap
-2. cmd/nabu-client/main.go: --obfuscation=websocket desteği
-3. test/integration: TestWebSocketRelayEcho
-4. PROTOCOL.md v1.5: §15 WebSocket Obfuscation
-
-Seçenek B — Relay TLS cert pinning:
-1. pkg/relay/tls_config.go: cert fingerprint (SHA-256) hesapla + logla
-2. pkg/obfuscation/http_connect.go: PinCertFingerprint []byte alanı + VerifyPeerCertificate hook
-3. cmd/nabu-client: --relay-tls-pin flag
-4. test/integration: TestTLSPinnedCertDialAccept + TestTLSWrongPinRejected
+Oturum 1.26 — uTLS Chrome fingerprint:
+1. go get github.com/refraction-networking/utls
+2. pkg/obfuscation/utls_dialer.go: uTLSDial(addr, cfg, helloID) net.Conn
+3. WebSocketLayer.Connect() + HTTPConnect.Connect(): UTLSEnabled bool alanı
+4. cmd/nabu-client: --obfs-utls (bool) + --obfs-utls-fingerprint (string, default "chrome")
+5. pkg/obfuscation/utls_dialer_test.go: 3+ unit test
+6. PROTOCOL.md v1.6: §16 uTLS Traffic Normalisation
 ```
 
 ## Tamamlananlar
