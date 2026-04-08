@@ -2,23 +2,28 @@
 # Bu dosyayı her oturum başında oku, her oturum sonunda güncelle.
 
 ## Son Güncelleme
-Tarih: 2026-04-08
-Oturum: 1.23 (Tamamlandı)
+Tarih: 2026-04-09
+Oturum: 1.24 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — Obfuscation Layer
 - Sprint: 2 — Faz 2 Bootstrap
-- Oturum: 1.23 → Sonraki: 1.24 (Anti-replay window + client-side TLS dialer)
+- Oturum: 1.24 → Sonraki: 1.25 (WebSocket obfuscation veya metrics patcher / relay TLS cert pinning)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.24 — Anti-replay window + client-side TLS dialer:
-1. pkg/transport/layer.go: anti-replay bitmap (64-bit sliding window, sequence)
-   - Replay attack: aynı Seq + Payload — DROP + warn
-2. pkg/obfuscation/http_connect.go: TLS dial desteği (RelayTLSConfig field)
-   - --obfs-tls flag + --obfs-tls-insecure (test için)
-3. test/integration: replay + TLS-dialed-by-client e2e testi
-4. PROTOCOL.md v1.4: §14 Anti-replay Window
+Oturum 1.25 — WebSocket obfuscation veya relay TLS cert pinning:
+Seçenek A — WebSocket obfuscation:
+1. pkg/obfuscation/websocket.go: transport.Layer impl; HTTP Upgrade + WS frame wrap
+2. cmd/nabu-client/main.go: --obfuscation=websocket desteği
+3. test/integration: TestWebSocketRelayEcho
+4. PROTOCOL.md v1.5: §15 WebSocket Obfuscation
+
+Seçenek B — Relay TLS cert pinning:
+1. pkg/relay/tls_config.go: cert fingerprint (SHA-256) hesapla + logla
+2. pkg/obfuscation/http_connect.go: PinCertFingerprint []byte alanı + VerifyPeerCertificate hook
+3. cmd/nabu-client: --relay-tls-pin flag
+4. test/integration: TestTLSPinnedCertDialAccept + TestTLSWrongPinRejected
 ```
 
 ## Tamamlananlar
@@ -184,11 +189,23 @@ Oturum 1.24 — Anti-replay window + client-side TLS dialer:
 - [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL
 - [x] golangci-lint clean
 - [x] git commit 06a88be (Oturum 1.23)
+- [x] pkg/relay/replay_window.go: ReplayWindow — 64-frame bitmap sliding window (NewReplayWindow, Check, Reset)
+- [x] pkg/relay/replay_window_test.go: 8 unit test (FirstFrame/Duplicate/OldRejected/OOO/Boundary/LargeJump/Sequential/Reset) PASS
+- [x] pkg/relay/tcp_server.go: handleConn'da per-connection anti-replay (replay := NewReplayWindow())
+- [x] pkg/relay/udp_server.go: replayWindows sync.Map + getOrCreateReplayWindow/resetReplayWindow + Start() loop anti-replay check
+- [x] pkg/obfuscation/http_connect.go: RelayTLSConfig *tls.Config alanı + Connect() TLS upgrade (tls.Client + explicit Handshake + SNI)
+- [x] cmd/nabu-client/main.go: --obfs-tls + --obfs-tls-insecure flag'leri; HTTPConnect.RelayTLSConfig set
+- [x] test/integration: TestTCPRelayReplayDrop + TestHTTPConnectClientTLSDial PASS
+- [x] docs/PROTOCOL.md v1.4: §14 Anti-replay Window (motivasyon, bitmap algoritması, kural tablosu, kapsam, changelog)
+- [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL, goleak temiz
+- [x] golangci-lint clean
+- [x] git commit b66c68d (Oturum 1.24)
 
 ## Yarım Kalanlar
-- Anti-replay window (sliding window, sequence number bitmap) → Oturum 1.24
-- Client-side TLS dialer (--obfs-tls flag, pkg/obfuscation/http_connect.go RelayTLSConfig)
-- PROTOCOL.md v1.4: §14 Anti-replay Window
+- WebSocket obfuscation layer (ws:// disguise) → Oturum 1.25 (Seçenek A)
+- Relay TLS cert pinning (SHA-256 fingerprint) → Oturum 1.25 (Seçenek B)
+- Connection multiplexing (multiple streams over one TLS session)
+- nabu-client config file TLS cert support
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
