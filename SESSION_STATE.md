@@ -3,21 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.18 (Tamamlandı)
+Oturum: 1.19 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
-- Faz: 1 — Temel UDP Tünel
+- Faz: 1 — Temel UDP Tünel (TAMAMLANDI)
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.18 → Sonraki: 1.19 (Faz 1 Mimari İnceleme)
+- Oturum: 1.19 → Sonraki: 1.20 (PROTOCOL.md + Faz 2 hazırlık)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. Oturum 1.19 — Faz 1 Architecture Review:
-   - goroutine leak check (goleak entegrasyonu)
-   - interface design review (pkg/relay, pkg/tunnel, pkg/transport)
-   - error handling consistency check
-   - Faz 2 hazırlık değerlendirmesi
-2. Faz 2 hazırlığı: obfuscation layer planlaması
+Oturum 1.20 seçenekleri (öncelik sırasıyla):
+1. PROTOCOL.md güncelle — X25519 DH, Layer interface, Ping/Pong, Stats
+2. pkg/obfuscation skeleton — HTTP CONNECT wrapper transport.Layer impl
+3. pkg/relay stats HTTP endpoint — Prometheus veya plain JSON /metrics
 ```
 
 ## Tamamlananlar
@@ -122,11 +120,17 @@ Oturum: 1.18 (Tamamlandı)
 - [x] Tüm integration testler startConfiguredRelay'e taşındı (relay goroutine port reuse race fix)
 - [x] go test -race geçiyor: 3/3 ardışık geçiş (7 paket, 0 FAIL)
 - [x] git commit d3a0df8 (Oturum 1.18)
+- [x] pkg/transport/layer.go: Layer, RTTMeasurer, ReadTimeoutSetter, SessionKeySetter interfaces
+- [x] pkg/transport/udp_client.go: SetReadTimeout/SetSessionKey methods + compile-time assertions
+- [x] pkg/tunnel/relay_handler.go: runTunnel() extracted, tüm fonksiyonlar transport.Layer kullanıyor (Faz 2 obfuscation hazır)
+- [x] test/integration/helpers_test.go: goleak TestMain — sıfır goroutine leak onaylandı
+- [x] go.mod: go.uber.org/goleak v1.3.0 eklendi
+- [x] git commit d99f3af (Oturum 1.19)
 
 ## Yarım Kalanlar
 - Bant genişliği istatistikleri (bytes_in/out per stream) → Stats struct var ama Prometheus/HTTP endpoint yok
 - Faz 2 obfuscation layer henüz başlamadı
-- Faz 1 architecture review (goroutine leak check, interface review) — Oturum 1.19
+- PROTOCOL.md güncellenmeli (Layer interface, X25519 DH detayları)
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
