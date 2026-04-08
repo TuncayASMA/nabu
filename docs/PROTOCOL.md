@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 1.0 (Faz 1 — Temel UDP Tünel)  
-**Status:** Reference implementation complete  
+**Version:** 1.1 (Faz 1 — Architecture Complete)  
+**Status:** Reference implementation complete; Faz 2 obfuscation layer pending  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -18,7 +18,9 @@
 8. [RTT Measurement (Ping/Pong)](#rtt-measurement-pingpong)
 9. [Stream Teardown](#stream-teardown)
 10. [Rate Limiting](#rate-limiting)
-11. [Security Considerations](#security-considerations)
+11. [Transport Abstraction (Faz 2 Prep)](#transport-abstraction-faz-2-prep)
+12. [Security Considerations](#security-considerations)
+13. [Changelog](#changelog)
 
 ---
 
@@ -295,3 +297,101 @@ The relay implements **token bucket** rate limiting per `(IP, port)` source.
 
 > **Known limitation (Faz 1):** No anti-replay window beyond GCM nonce
 > uniqueness.  A dedicated sequence-number replay window is planned for Faz 2.
+
+---
+
+## Transport Abstraction (Faz 2 Prep)
+
+All tunnel logic in `pkg/tunnel` operates against the `transport.Layer`
+interface rather than `*transport.UDPClient` directly.  This decouples the
+framing protocol from the underlying transport so that Faz 2 obfuscation layers
+(HTTP CONNECT, TLS camouflage, WebSocket wrapper, etc.) can be swapped in
+without touching relay logic.
+
+### Core Interface
+
+```go
+// Layer is implemented by any transport that can send/receive NABU frames.
+type Layer interface {
+    Connect() error
+    Close() error
+    SendFrame(f Frame) error
+    ReceiveFrame() (Frame, error)
+}
+```
+
+### Optional Capability Interfaces
+
+The tunnel interrogates optional interfaces at runtime via type assertions:
+
+```go
+// ReadTimeoutSetter: implemented by UDPClient and any Layer that supports
+// configurable per-call read deadlines.
+type ReadTimeoutSetter interface {
+    SetReadTimeout(d time.Duration)
+}
+
+// SessionKeySetter: implemented by UDPClient and any Layer that supports
+// applying an AES-256-GCM session key derived from the X25519 handshake.
+type SessionKeySetter interface {
+    SetSessionKey(key []byte)
+}
+
+// RTTMeasurer: implemented by transports that support Ping/Pong RTT probing.
+type RTTMeasurer interface {
+    MeasureRTT(streamID uint16, seq uint32) (time.Duration, error)
+}
+```
+
+Usage pattern in `performHandshake`:
+
+```go
+// Set a tighter timeout during handshake (optional capability).
+if ts, ok := client.(transport.ReadTimeoutSetter); ok {
+    ts.SetReadTimeout(defaultAckTimeout)
+}
+// ... X25519 key exchange ...
+// Install the derived session key (optional capability).
+if sk, ok := client.(transport.SessionKeySetter); ok {
+    sk.SetSessionKey(derivedKey)
+}
+```
+
+### Compile-Time Assertions
+
+`pkg/transport/udp_client.go` enforces full interface compliance at build time:
+
+```go
+var _ Layer      = (*UDPClient)(nil)
+var _ RTTMeasurer = (*UDPClient)(nil)
+```
+
+### Tunnel Entry Point
+
+`pkg/tunnel/relay_handler.go` exposes a testable `runTunnel` function that
+accepts any `transport.Layer`, making it straightforward to unit-test with mock
+transports:
+
+```go
+func runTunnel(conn net.Conn, req socks5.Request, layer transport.Layer, psk []byte) error
+```
+
+`NewRelayHandler` wraps `runTunnel` with a concrete `*UDPClient` for production
+use; future obfuscation wrappers will implement `Layer` and be plugged in here.
+
+### Faz 2 Extension Points
+
+To add a new transport (e.g., HTTP CONNECT camouflage):
+
+1. Create `pkg/obfuscation/http_connect.go` implementing `transport.Layer`.
+2. Optionally implement `ReadTimeoutSetter` / `SessionKeySetter` if needed.
+3. Wire it in `NewRelayHandler` via a config flag — zero changes to tunnel logic.
+
+---
+
+## Changelog
+
+| Version | Oturum | Changes |
+|---------|--------|---------|
+| 1.0     | 1.16   | Initial specification: frame format, handshake, encryption, RTT, reliability, rate limiting |
+| 1.1     | 1.20   | Added §11 Transport Abstraction (Layer interface, optional capabilities, Faz 2 extension points) |

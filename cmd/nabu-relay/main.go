@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/TuncayASMA/nabu/pkg/config"
 	"github.com/TuncayASMA/nabu/pkg/logger"
@@ -25,6 +27,7 @@ func main() {
 	serveUDP := flag.Bool("serve-udp", true, "UDP relay listener baslat")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
+	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -85,6 +88,27 @@ func main() {
 	}
 	if *psk != "" {
 		udpServer.PSK = []byte(*psk)
+	}
+
+	if *statsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", relay.StatsHandler(&udpServer.Stats))
+		mux.Handle("/stats", relay.StatsHandler(&udpServer.Stats))
+		httpSrv := &http.Server{
+			Addr:              *statsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info("stats HTTP sunucusu basliyor", slog.String("addr", *statsAddr))
+			if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("stats HTTP sunucusu hatasi", slog.Any("err", err))
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			_ = httpSrv.Close()
+		}()
 	}
 
 	if err := udpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
