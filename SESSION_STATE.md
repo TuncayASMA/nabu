@@ -3,20 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.11 (Tamamlandı)
+Oturum: 1.14 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.11 — X25519 ephemeral key exchange + PSK auth reject
+- Oturum: 1.14 — Deploy (Docker Compose + OCI ARM64 systemd)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/relay: per-source rate limiting (token bucket, UDP kaynak IP başına, ~100 pkt/s)
-2. pkg/transport: RTT-aware congestion backoff (ping/pong frame veya frame timestamp)
-3. deploy/: Docker Compose (client+relay) + OCI ARM systemd deployment rehberi
-4. pkg/relay: bant genişliği istatistikleri (bytes_in/out per stream, prometheus gauge opsiyonel)
-5. docs/PROTOCOL.md: wire format, handshake akışı, şifreleme katmanı dokümantasyonu
+1. pkg/relay: bant genişliği istatistikleri (bytes_in/out per stream, Prometheus gauge opsiyonel)
+2. docs/PROTOCOL.md: wire format, handshake akışı, şifreleme katmanı dokümantasyonu
+3. test/integration: end-to-end RTT ölçümünü içeren entegrasyon testi (TestRTTAdaptiveBackoff)
+4. pkg/relay: graceful shutdown (context cancel → tüm stream'ler FIN gönder)
 ```
 
 ## Tamamlananlar
@@ -85,18 +84,32 @@ Oturum: 1.11 (Tamamlandı)
 - [x] pkg/tunnel/relay_handler.go: performHandshake → X25519 DH
 - [x] test/integration/encryption_test.go: TestNoPSKClientRejectedByPSKRelay PASS
 - [x] git commit 24005d7 + push → main
+- [x] pkg/relay/ratelimit.go: TokenBucket (goroutine-safe, token refill), RateLimiterMap
+- [x] UDPServer.RateLimitPPS field, main loop'ta Drop+Warn entegrasyonu
+- [x] pkg/relay/ratelimit_test.go: Allow / Exhausted / Refill / Isolation / Concurrency PASS
+- [x] test/integration: TestRateLimitDropsExcessFrames PASS
+- [x] git commit 3c574fe (Oturum 1.12)
+- [x] pkg/transport/frame.go: FlagPing=0x08, FlagPong=0x10 eklendi
+- [x] pkg/transport/udp_client.go: MeasureRTT() — Ping gönder, Pong bekle, süre döndür
+- [x] pkg/relay/udp_server.go: FlagPing → FlagPong yanıt (Seq → Ack echo)
+- [x] pkg/tunnel/relay_handler.go: post-handshake RTT ölçümü; baseTimeout=2×RTT+slop
+  sendFrameWithRetry + pipeConnToRelay baseTimeout parametresi aldı
+- [x] pkg/transport/udp_client_test.go: TestMeasureRTTPingPong + TestMeasureRTTTimeout PASS
+- [x] Tüm testler geçti (go test ./...)
+- [x] git commit cb7eefa (Oturum 1.13)
+- [x] deploy/docker/Dockerfile.relay + Dockerfile.client (distroless ARM64)
+- [x] deploy/docker/docker-compose.yml (relay + client servisleri, .env desteği)
+- [x] deploy/docker/.env.example
+- [x] deploy/systemd/nabu-relay.service + nabu-client.service (hardened)
+- [x] deploy/systemd/relay.env.example + client.env.example
+- [x] RUNBOOK.md: Docker Compose + systemd deployment bölümü eklendi
+- [x] git commit 582bf35 (Oturum 1.14)
 
 ## Yarım Kalanlar
-- Rate limiting ve per-source quota henüz yok
-- RTT-aware congestion backoff henüz yok
-- Deployment dökümantasyonu henüz yok
-- Protocol wire format dokümantasyonu (PROTOCOL.md) yok
-
-## Reliability Notu (1.9)
-- Stop-and-wait ACK: tamamlandı
-- Reorder buffer (OOO + duplicate): tamamlandı, integration testleri geçiyor
-- Backpressure (max 64 frame/stream): tamamlandı
-- Exponential backoff (300ms → 4s): tamamlandı
+- Bant genişliği istatistikleri (bytes_in/out per stream) henüz yok
+- PROTOCOL.md wire format dokümantasyonu yok
+- RTT backoff entegrasyon testi yok
+- Graceful shutdown eksik
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
