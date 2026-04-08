@@ -3,21 +3,22 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.22 (Tamamlandı)
+Oturum: 1.23 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — Obfuscation Layer
 - Sprint: 2 — Faz 2 Bootstrap
-- Oturum: 1.22 → Sonraki: 1.23 (TLS wrapping, per-stream stats)
+- Oturum: 1.23 → Sonraki: 1.24 (Anti-replay window + client-side TLS dialer)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.23 — TLS wrapping + per-stream stats:
-1. pkg/relay/tcp_server.go: --tcp-tls flag ile tls.Conn wrapping (self-signed cert)
-   - Passive observer sadece TLS ClientHello görür (HTTPS ile ayrımsız)
-2. pkg/relay/stats_handler.go: per-stream BytesIn/BytesOut (StreamID map)
-3. test/integration: TLS TCPServer echo testi
-4. PROTOCOL.md v1.3: §13 TLS Wrapping
+Oturum 1.24 — Anti-replay window + client-side TLS dialer:
+1. pkg/transport/layer.go: anti-replay bitmap (64-bit sliding window, sequence)
+   - Replay attack: aynı Seq + Payload — DROP + warn
+2. pkg/obfuscation/http_connect.go: TLS dial desteği (RelayTLSConfig field)
+   - --obfs-tls flag + --obfs-tls-insecure (test için)
+3. test/integration: replay + TLS-dialed-by-client e2e testi
+4. PROTOCOL.md v1.4: §14 Anti-replay Window
 ```
 
 ## Tamamlananlar
@@ -164,9 +165,30 @@ Oturum 1.23 — TLS wrapping + per-stream stats:
 - [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL, goleak temiz
 - [x] golangci-lint clean
 - [x] git commit 34876f1 (Oturum 1.22)
-- TLS wrapping: TCPServer üzerine tls.Conn katmanı → Oturum 1.23
-- Per-stream stats (bytes_in/out per streamID) — GlobalStats sadece server-wide
-- Anti-replay window (Faz 2 güvenlik iyileştirmesi)
+- [x] pkg/relay/tls_config.go: BuildTLSConfig() — sertifika dosyası veya self-signed ECDSA P-256
+  - MinVersion: TLS 1.3 (DPI parmak izi direnci)
+  - generateSelfSigned(): CN=nabu-relay, 2 yıllık geçerlilik, her başlatılda yeni cert
+- [x] pkg/relay/tcp_server.go: TLSConfig *tls.Config alanı + Start() içinde tls.NewListener wrap
+  - "tls=true/false" log mesajına eklendi
+- [x] cmd/nabu-relay/main.go: --tcp-tls, --tcp-cert, --tcp-key flag'leri
+  - relay.BuildTLSConfig() çağrısı + tcpServer.TLSConfig set
+- [x] pkg/relay/udp_server.go: StreamState.BytesIn + BytesOut (atomic.Int64)
+  - Per-stream byte sayacı — GlobalStats'a ek olarak
+- [x] pkg/relay/tcp_server.go: handleData + pipeTargetToClient state.BytesIn/BytesOut günceller
+- [x] pkg/obfuscation/http_connect.go: WrapConn() + NewRawTCPLayer() helpers
+  - Hazır net.Conn'u transport.Layer olarak sarar (TLS conn için)
+- [x] test/integration/http_connect_relay_test.go: TestTLSTCPRelayDirectEcho eklendi
+  - tls.Dial + NewRawTCPLayer + CONNECT/DATA/echo round-trip PASS
+- [x] docs/PROTOCOL.md v1.3: §13 TLS Wrapping bölümü
+  - Motivasyon, mimari, self-signed cert, per-stream sayıçlar
+- [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL
+- [x] golangci-lint clean
+- [x] git commit 06a88be (Oturum 1.23)
+
+## Yarım Kalanlar
+- Anti-replay window (sliding window, sequence number bitmap) → Oturum 1.24
+- Client-side TLS dialer (--obfs-tls flag, pkg/obfuscation/http_connect.go RelayTLSConfig)
+- PROTOCOL.md v1.4: §14 Anti-replay Window
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
