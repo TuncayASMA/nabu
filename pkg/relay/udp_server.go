@@ -19,18 +19,18 @@ import (
 
 // StreamState tracks per-stream relay state for ordering, buffering, and timeout.
 type StreamState struct {
-	StreamID         uint16
-	RemoteAddr       net.Addr
-	NextExpectedSeq  uint32    // next seq we expect to deliver in-order
-	LastAckTime      time.Time
-	RetryCount       int
-	MaxRetries       int
-	RetryInterval    time.Duration
-	TargetConn       net.Conn
-	RelaySeq         uint32
-	reorderBuf       map[uint32][]byte // out-of-order frames waiting for delivery
-	maxBufFrames     int               // backpressure: max frames in reorder buffer
-	mu               sync.Mutex
+	StreamID        uint16
+	RemoteAddr      net.Addr
+	NextExpectedSeq uint32 // next seq we expect to deliver in-order
+	LastAckTime     time.Time
+	RetryCount      int
+	MaxRetries      int
+	RetryInterval   time.Duration
+	TargetConn      net.Conn
+	RelaySeq        uint32
+	reorderBuf      map[uint32][]byte // out-of-order frames waiting for delivery
+	maxBufFrames    int               // backpressure: max frames in reorder buffer
+	mu              sync.Mutex
 }
 
 type UDPServer struct {
@@ -44,8 +44,8 @@ type UDPServer struct {
 	// Burst is set to 2×RateLimitPPS. Zero disables rate limiting.
 	RateLimitPPS int
 	// Stats exposes live server-wide traffic counters.
-	Stats        GlobalStats
-	conn         net.PacketConn
+	Stats GlobalStats
+	conn  net.PacketConn
 	// streams: key=streamStateKey(streamID, remoteAddr), value=*StreamState
 	streams sync.Map
 	// sessions: key=remoteAddr.String(), value=[]byte (session key per client IP:port)

@@ -29,7 +29,7 @@ func TestSocks5RelayForwardingEcho(t *testing.T) {
 		relayErrCh <- relayServer.Start(relayCtx)
 	}()
 
-time.Sleep(200 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()

@@ -23,6 +23,17 @@ type UDPClient struct {
 	conn       *net.UDPConn
 }
 
+// Compile-time assertions: UDPClient must satisfy both Layer and RTTMeasurer.
+var _ Layer = (*UDPClient)(nil)
+var _ RTTMeasurer = (*UDPClient)(nil)
+var _ ReadTimeoutSetter = (*UDPClient)(nil)
+
+// SetReadTimeout adjusts the per-receive-call deadline used by ReceiveFrame.
+// It satisfies the ReadTimeoutSetter optional interface.
+func (c *UDPClient) SetReadTimeout(d time.Duration) {
+	c.ReadTimeout = d
+}
+
 func NewUDPClient(relayAddr string) (*UDPClient, error) {
 	if relayAddr == "" {
 		return nil, fmt.Errorf("relay address cannot be empty")

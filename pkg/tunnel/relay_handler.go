@@ -38,18 +38,27 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 			return fmt.Errorf("connect udp client failed: %w", err)
 		}
 
-		// PSK handshake: derive session key before sending any application frame.
-		if len(psk) > 0 {
-			if err := performHandshake(udpClient, psk); err != nil {
-				return fmt.Errorf("handshake failed: %w", err)
-			}
-		}
+		return runTunnel(conn, req, udpClient, psk)
+	}
+}
 
-		// Measure RTT to use as the base for adaptive retry timeouts.
-		// Fall back to defaultAckTimeout if the ping fails (e.g., relay too old).
-		streamID := uint16(atomic.AddUint32(&nextStreamID, 1))
-		baseTimeout := defaultAckTimeout
-		if rtt, rttErr := udpClient.MeasureRTT(streamID, 0); rttErr == nil && rtt > 0 {
+// runTunnel executes the full tunnel lifecycle on the given transport Layer.
+// Separating this from NewRelayHandler makes it testable with any Layer
+// implementation (e.g., a future obfuscation wrapper).
+func runTunnel(conn net.Conn, req socks5.Request, layer transport.Layer, psk []byte) error {
+	// PSK handshake: derive session key before sending any application frame.
+	if len(psk) > 0 {
+		if err := performHandshake(layer, psk); err != nil {
+			return fmt.Errorf("handshake failed: %w", err)
+		}
+	}
+
+	// Measure RTT to use as the base for adaptive retry timeouts.
+	// Fall back to defaultAckTimeout if the ping fails (e.g., relay too old).
+	streamID := uint16(atomic.AddUint32(&nextStreamID, 1))
+	baseTimeout := defaultAckTimeout
+	if measurer, ok := layer.(transport.RTTMeasurer); ok {
+		if rtt, rttErr := measurer.MeasureRTT(streamID, 0); rttErr == nil && rtt > 0 {
 			baseTimeout = rtt*2 + rttSlop
 			if baseTimeout < minRTTBackoff {
 				baseTimeout = minRTTBackoff
@@ -58,44 +67,44 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 				baseTimeout = maxRTTBackoff
 			}
 		}
-
-		connectSeq := uint32(1)
-		if err := udpClient.SendFrame(transport.Frame{
-			Version:  transport.FrameVersion,
-			Flags:    transport.FlagConnect,
-			StreamID: streamID,
-			Seq:      connectSeq,
-			Payload:  []byte(net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))),
-		}); err != nil {
-			return fmt.Errorf("send connect frame failed: %w", err)
-		}
-
-		prevReadTimeout := udpClient.ReadTimeout
-		udpClient.ReadTimeout = baseTimeout
-
-		if err := waitForAck(udpClient, streamID, connectSeq); err != nil {
-			udpClient.ReadTimeout = prevReadTimeout
-			return fmt.Errorf("wait for connect ack failed: %w", err)
-		}
-
-		resultCh := make(chan error, 2)
-		ackCh := make(chan uint32, 64)
-		var once sync.Once
-		shutdown := func(err error) {
-			once.Do(func() {
-				_ = udpClient.Close()
-				resultCh <- err
-			})
-		}
-
-		go pipeConnToRelay(conn, udpClient, streamID, ackCh, baseTimeout, shutdown)
-		go pipeRelayToConn(conn, udpClient, streamID, ackCh, shutdown)
-
-		if err := <-resultCh; err != nil && err != io.EOF {
-			return err
-		}
-		return nil
 	}
+
+	connectSeq := uint32(1)
+	if err := layer.SendFrame(transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagConnect,
+		StreamID: streamID,
+		Seq:      connectSeq,
+		Payload:  []byte(net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port)))),
+	}); err != nil {
+		return fmt.Errorf("send connect frame failed: %w", err)
+	}
+
+	if ts, ok := layer.(transport.ReadTimeoutSetter); ok {
+		ts.SetReadTimeout(baseTimeout)
+	}
+
+	if err := waitForAck(layer, streamID, connectSeq); err != nil {
+		return fmt.Errorf("wait for connect ack failed: %w", err)
+	}
+
+	resultCh := make(chan error, 2)
+	ackCh := make(chan uint32, 64)
+	var once sync.Once
+	shutdown := func(err error) {
+		once.Do(func() {
+			_ = layer.Close()
+			resultCh <- err
+		})
+	}
+
+	go pipeConnToRelay(conn, layer, streamID, ackCh, baseTimeout, shutdown)
+	go pipeRelayToConn(conn, layer, streamID, ackCh, shutdown)
+
+	if err := <-resultCh; err != nil && err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 // performHandshake executes the X25519 key exchange with the relay.
@@ -106,7 +115,7 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 //  3. Wait for relay's FlagHandshake|FlagACK with Payload = relayPublicKey (32 B).
 //  4. Compute shared secret and derive session key.
 //  5. Set UDPClient.SessionKey — all subsequent frames will be encrypted.
-func performHandshake(client *transport.UDPClient, psk []byte) error {
+func performHandshake(client transport.Layer, psk []byte) error {
 	kp, err := nabuCrypto.GenerateX25519KeyPair()
 	if err != nil {
 		return fmt.Errorf("client keygen failed: %w", err)
@@ -122,9 +131,9 @@ func performHandshake(client *transport.UDPClient, psk []byte) error {
 		return fmt.Errorf("send handshake frame failed: %w", err)
 	}
 
-	prev := client.ReadTimeout
-	client.ReadTimeout = defaultAckTimeout
-	defer func() { client.ReadTimeout = prev }()
+	if ts, ok := client.(transport.ReadTimeoutSetter); ok {
+		ts.SetReadTimeout(defaultAckTimeout)
+	}
 
 	var relayPub []byte
 	for {
@@ -151,11 +160,14 @@ func performHandshake(client *transport.UDPClient, psk []byte) error {
 	if err != nil {
 		return fmt.Errorf("derive session key failed: %w", err)
 	}
-	client.SessionKey = key
+	// UDPClient implements this directly; obfuscation wrappers must proxy it.
+	if udp, ok := client.(*transport.UDPClient); ok {
+		udp.SessionKey = key
+	}
 	return nil
 }
 
-func waitForAck(client *transport.UDPClient, streamID uint16, seq uint32) error {
+func waitForAck(client transport.Layer, streamID uint16, seq uint32) error {
 	for {
 		frame, err := client.ReceiveFrame()
 		if err != nil {
@@ -173,7 +185,7 @@ func waitForAck(client *transport.UDPClient, streamID uint16, seq uint32) error 
 	}
 }
 
-func sendFrameWithRetry(client *transport.UDPClient, frame transport.Frame, ackCh <-chan uint32, baseTimeout time.Duration) error {
+func sendFrameWithRetry(client transport.Layer, frame transport.Frame, ackCh <-chan uint32, baseTimeout time.Duration) error {
 	backoff := baseTimeout
 	if backoff < minRTTBackoff {
 		backoff = minRTTBackoff
@@ -218,7 +230,7 @@ func waitForAckSeq(ackCh <-chan uint32, expectedSeq uint32, timeout time.Duratio
 	}
 }
 
-func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh <-chan uint32, baseTimeout time.Duration, shutdown func(error)) {
+func pipeConnToRelay(conn net.Conn, client transport.Layer, streamID uint16, ackCh <-chan uint32, baseTimeout time.Duration, shutdown func(error)) {
 	buf := make([]byte, clientChunkSize)
 	seq := uint32(2)
 	for {
@@ -256,7 +268,7 @@ func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16
 	}
 }
 
-func pipeRelayToConn(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh chan<- uint32, shutdown func(error)) {
+func pipeRelayToConn(conn net.Conn, client transport.Layer, streamID uint16, ackCh chan<- uint32, shutdown func(error)) {
 	for {
 		frame, err := client.ReceiveFrame()
 		if err != nil {

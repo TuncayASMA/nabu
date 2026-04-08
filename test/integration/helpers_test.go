@@ -4,11 +4,23 @@ import (
 	"context"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/TuncayASMA/nabu/pkg/relay"
 )
+
+func TestMain(m *testing.M) {
+	// Verify no goroutine leaks across the whole integration test binary.
+	// We ignore the goroutines that goleak considers benign background workers.
+	goleak.VerifyTestMain(m)
+	// VerifyTestMain calls os.Exit internally — code below is unreachable,
+	// but we keep it to satisfy Go's "main must return" linting rules.
+	os.Exit(m.Run())
+}
 
 // getFreeUDPAddr picks an OS-assigned free UDP port on loopback.
 // Note: there is a small TOCTOU window between the Close() and when the caller
