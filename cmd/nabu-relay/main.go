@@ -25,6 +25,9 @@ func main() {
 	configPath := flag.String("config", config.DefaultRelayConfigPath, "Relay config dosya yolu")
 	wgCompatible := flag.Bool("wg-compatible", true, "WireGuard istemcileriyle uyumlu UDP iletim davranisi")
 	serveUDP := flag.Bool("serve-udp", true, "UDP relay listener baslat")
+	serveTCP := flag.Bool("serve-tcp", false, "TCP relay listener baslat (HTTPConnect obfuscation için)")
+	tcpAddr := flag.String("tcp-addr", ":8443", "TCP relay dinleme adresi (serve-tcp=true ise kullanılır)")
+	acceptHTTPConnect := flag.Bool("tcp-http-connect", true, "TCP listener'da HTTP CONNECT handshake bekle")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
@@ -111,7 +114,37 @@ func main() {
 		}()
 	}
 
-	if err := udpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	// Start UDP relay in background so TCP relay can run alongside it.
+	udpErrCh := make(chan error, 1)
+	go func() {
+		if err := udpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			udpErrCh <- err
+		} else {
+			udpErrCh <- nil
+		}
+	}()
+
+	// TCP relay (HTTPConnect obfuscation karşı tarafı).
+	if *serveTCP {
+		tcpServer, err := relay.NewTCPServer(*tcpAddr, log)
+		if err != nil {
+			log.Error("tcp relay olusturulamadi", slog.Any("err", err))
+			os.Exit(1)
+		}
+		if *psk != "" {
+			tcpServer.PSK = []byte(*psk)
+		}
+		tcpServer.AcceptHTTPConnect = *acceptHTTPConnect
+		log.Info("TCP relay başlıyor", slog.String("addr", *tcpAddr), slog.Bool("http_connect", *acceptHTTPConnect))
+		go func() {
+			if err := tcpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("tcp relay hatasi", slog.Any("err", err))
+			}
+		}()
+	}
+
+	// Wait for UDP relay to finish (primary server).
+	if err := <-udpErrCh; err != nil {
 		log.Error("udp relay hatasi", slog.Any("err", err))
 		os.Exit(1)
 	}

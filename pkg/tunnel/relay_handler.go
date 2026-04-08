@@ -57,6 +57,22 @@ func NewRelayHandlerWithLayer(relayAddr string, psk []byte, layer transport.Laye
 	}
 }
 
+// NewRelayHandlerWithFactory returns a ConnHandler that calls layerFactory on
+// every inbound SOCKS5 connection to obtain a fresh, already-connected
+// transport.Layer. This is the correct approach when the obfuscation layer is
+// a TCP connection (e.g. HTTPConnect) that cannot be multiplexed across
+// concurrent SOCKS5 sessions.
+func NewRelayHandlerWithFactory(psk []byte, layerFactory func() (transport.Layer, error)) socks5.ConnHandler {
+	return func(conn net.Conn, req socks5.Request) error {
+		l, err := layerFactory()
+		if err != nil {
+			return fmt.Errorf("create transport layer failed: %w", err)
+		}
+		defer l.Close()
+		return runTunnel(conn, req, l, psk)
+	}
+}
+
 // runTunnel executes the full tunnel lifecycle on the given transport Layer.
 // Separating this from NewRelayHandler makes it testable with any Layer
 // implementation (e.g., a future obfuscation wrapper).

@@ -11,6 +11,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/TuncayASMA/nabu/pkg/relay"
+	"github.com/TuncayASMA/nabu/pkg/socks5"
 )
 
 func TestMain(m *testing.M) {
@@ -112,4 +113,70 @@ func startConfiguredRelay(t *testing.T, addr string, s *relay.UDPServer) (string
 	})
 
 	return addr, cancel, errCh
+}
+
+// dialSOCKS5 connects to a SOCKS5 proxy at proxyAddr and sends a CONNECT
+// request for targetAddr (host:port). It returns the established net.Conn
+// ready for application-level I/O after the SOCKS5 handshake completes.
+// Only IPv4 numeric host addresses are supported.
+func dialSOCKS5(proxyAddr, targetAddr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", proxyAddr, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	// SOCKS5 greeting: VERSION=5, NAUTH=1, METHOD=NO_AUTH
+	if _, err = conn.Write([]byte{socks5.Version5, 1, socks5.NoAuth}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	// Read 2-byte server method selection
+	resp := make([]byte, 2)
+	if _, err = io.ReadFull(conn, resp); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Parse host and port from targetAddr
+	host, portStr, err := net.SplitHostPort(targetAddr)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	ip := net.ParseIP(host).To4()
+	if ip == nil {
+		conn.Close()
+		return nil, net.InvalidAddrError("dialSOCKS5: only IPv4 numeric hosts supported")
+	}
+	var portNum int
+	if _, err = net.LookupPort("tcp", portStr); false {
+		_ = err
+	}
+	for _, c := range portStr {
+		portNum = portNum*10 + int(c-'0')
+	}
+
+	// SOCKS5 CONNECT request: VER CMD RSV ATYP IP[4] PORT[2]
+	req := []byte{
+		socks5.Version5, socks5.CmdConnect, 0x00, socks5.AddrTypeIPv4,
+		ip[0], ip[1], ip[2], ip[3],
+		byte(portNum >> 8), byte(portNum & 0xff),
+	}
+	if _, err = conn.Write(req); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// Read 10-byte SOCKS5 CONNECT response
+	connResp := make([]byte, 10)
+	if _, err = io.ReadFull(conn, connResp); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if connResp[1] != 0x00 {
+		conn.Close()
+		return nil, net.InvalidAddrError("SOCKS5 CONNECT refused")
+	}
+
+	return conn, nil
 }

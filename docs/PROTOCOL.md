@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 1.1 (Faz 1 — Architecture Complete)  
-**Status:** Reference implementation complete; Faz 2 obfuscation layer pending  
+**Version:** 1.2 (Faz 2 — TCP Transport + HTTPConnect Obfuscation)  
+**Status:** Reference implementation complete; Faz 2 obfuscation operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -18,9 +18,10 @@
 8. [RTT Measurement (Ping/Pong)](#rtt-measurement-pingpong)
 9. [Stream Teardown](#stream-teardown)
 10. [Rate Limiting](#rate-limiting)
-11. [Transport Abstraction (Faz 2 Prep)](#transport-abstraction-faz-2-prep)
-12. [Security Considerations](#security-considerations)
-13. [Changelog](#changelog)
+11. [Transport Abstraction (Layer Interface)](#transport-abstraction-faz-2-prep)
+12. [TCP Transport & HTTPConnect Obfuscation](#tcp-transport--httpconnect-obfuscation)
+13. [Security Considerations](#security-considerations)
+14. [Changelog](#changelog)
 
 ---
 
@@ -389,9 +390,127 @@ To add a new transport (e.g., HTTP CONNECT camouflage):
 
 ---
 
+## TCP Transport & HTTPConnect Obfuscation
+
+*(Added in v1.2, Oturum 1.22)*
+
+### Motivation
+
+Deep Packet Inspection (DPI) systems can fingerprint UDP traffic patterns.
+NABU v1.2 adds a TCP transport layer disguising NABU frames as HTTPS (port 443)
+traffic by tunnelling them inside an HTTP CONNECT session.
+
+### Architecture
+
+```
+  ┌──────────────┐  HTTP CONNECT  ┌─────────────────┐  TCP   ┌──────────────┐
+  │ nabu-client  │◄───────────────►│  TCPServer      │◄──────►│  Target      │
+  │ (HTTPConnect │  port 443      │  (pkg/relay)    │        │  (e.g.        │
+  │  Layer)      │                │                 │        │   example.com)│
+  └──────────────┘                └─────────────────┘        └──────────────┘
+```
+
+The **client side** is `pkg/obfuscation.HTTPConnect` — a `transport.Layer`
+implementation that wraps a TCP connection.
+
+The **relay side** is `pkg/relay.TCPServer` — a mirror of `UDPServer` that
+accepts TCP connections instead of UDP datagrams.
+
+### TCP Frame Framing
+
+Because TCP is stream-oriented, each NABU frame is length-prefixed:
+
+```
+┌───────────────────────┬──────────────────────────┐
+│   Length (4 bytes BE) │   Encoded Frame (N bytes) │
+└───────────────────────┴──────────────────────────┘
+```
+
+- **Length**: 32-bit big-endian unsigned integer; value = `len(encoded frame)`
+- **Encoded frame**: the same `transport.Frame` binary encoding as UDP, padded
+  and encrypted identically
+
+### HTTP CONNECT Preamble
+
+When `AcceptHTTPConnect = true` on `TCPServer`, the relay expects the client to
+send a standard HTTP CONNECT handshake before any NABU frames:
+
+```
+Client → Relay:
+  CONNECT nabu.relay:443 HTTP/1.1\r\n
+  Host: nabu.relay:443\r\n
+  \r\n
+
+Relay → Client:
+  HTTP/1.1 200 Connection established\r\n
+  \r\n
+```
+
+NABU frames follow immediately after this exchange. To a passive observer the
+connection looks like a standard TLS tunnel (HTTPS proxying).
+
+When `AcceptHTTPConnect = false` (default in tests), the relay accepts raw
+length-prefixed NABU frames directly — useful for testing without a mock proxy.
+
+### TCPServer Dispatcher
+
+`TCPServer.handleConn` reads frames in a loop using the same flag-based dispatch
+as `UDPServer`:
+
+| Flag       | Handler            | Action                                           |
+|------------|--------------------|--------------------------------------------------|
+| HANDSHAKE  | `handleHandshake`  | X25519 DH key exchange → derive session key      |
+| CONNECT    | `handleConnect`    | Dial target TCP; start `pipeTargetToClient` goroutine |
+| DATA       | `handleData`       | Reorder buffer → write to target; send ACK       |
+| FIN        | `closeStreamTCP`   | Close target conn; remove stream state           |
+
+### Client-Side Configuration
+
+```
+nabu-client --obfuscation http-connect \
+            --obfs-proxy <http-proxy-host>:<port> \
+            --relay <relay-host>:<relay-tcp-port>
+```
+
+| Flag             | Default  | Description                               |
+|------------------|----------|-------------------------------------------|
+| `--obfuscation`  | `none`   | Transport obfuscation: `none`, `http-connect` |
+| `--obfs-proxy`   | *(empty)*| HTTP CONNECT proxy (optional; empty = direct TCP to relay) |
+
+### Relay-Side Configuration
+
+```
+nabu-relay --serve-tcp \
+           --tcp-addr :8443 \
+           --tcp-http-connect
+```
+
+| Flag                  | Default   | Description                              |
+|-----------------------|-----------|------------------------------------------|
+| `--serve-tcp`         | `false`   | Enable TCPServer alongside UDP relay     |
+| `--tcp-addr`          | `:8443`   | TCP relay listen address                 |
+| `--tcp-http-connect`  | `true`    | Require HTTP CONNECT preamble from client |
+
+### Factory Pattern for SOCKS5 Integration
+
+`tunnel.NewRelayHandlerWithFactory` creates a new `transport.Layer` per SOCKS5
+session, which is required when the layer is a TCP connection (not mux-capable):
+
+```go
+srv.OnConnect = tunnel.NewRelayHandlerWithFactory(psk, func() (transport.Layer, error) {
+    return obfuscation.NewLayer(obfuscation.ModeHTTPConnect, relayAddr, proxyAddr)
+})
+```
+
+This is the correct approach for `http-connect` mode. `NewRelayHandlerWithLayer`
+(pre-built single layer) is only appropriate for multiplexing-capable transports.
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
 |---------|--------|---------|
 | 1.0     | 1.16   | Initial specification: frame format, handshake, encryption, RTT, reliability, rate limiting |
 | 1.1     | 1.20   | Added §11 Transport Abstraction (Layer interface, optional capabilities, Faz 2 extension points) |
+| 1.2     | 1.22   | Added §12 TCP Transport & HTTPConnect Obfuscation; `TCPServer` relay; `NewRelayHandlerWithFactory` |
