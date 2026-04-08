@@ -3,19 +3,19 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.19 (Tamamlandı)
+Oturum: 1.20 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
-- Faz: 1 — Temel UDP Tünel (TAMAMLANDI)
-- Sprint: 1 — Proje Bootstrap
-- Oturum: 1.19 → Sonraki: 1.20 (PROTOCOL.md + Faz 2 hazırlık)
+- Faz: 2 — Obfuscation Layer
+- Sprint: 2 — Faz 2 Bootstrap
+- Oturum: 1.20 → Sonraki: 1.21 (pkg/obfuscation HTTP CONNECT wrapper)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.20 seçenekleri (öncelik sırasıyla):
-1. PROTOCOL.md güncelle — X25519 DH, Layer interface, Ping/Pong, Stats
-2. pkg/obfuscation skeleton — HTTP CONNECT wrapper transport.Layer impl
-3. pkg/relay stats HTTP endpoint — Prometheus veya plain JSON /metrics
+Oturum 1.21 — Faz 2 Obfuscation Skeleton:
+1. pkg/obfuscation/http_connect.go — transport.Layer impl (HTTP CONNECT camouflage)
+2. cmd/nabu-client: --obfuscation flag (none | http-connect)
+3. Integration test: HTTP CONNECT obfuscated tunnel echo
 ```
 
 ## Tamamlananlar
@@ -126,11 +126,16 @@ Oturum 1.20 seçenekleri (öncelik sırasıyla):
 - [x] test/integration/helpers_test.go: goleak TestMain — sıfır goroutine leak onaylandı
 - [x] go.mod: go.uber.org/goleak v1.3.0 eklendi
 - [x] git commit d99f3af (Oturum 1.19)
+- [x] docs/PROTOCOL.md v1.1: §11 Transport Abstraction (Layer interface, optional capabilities, Faz 2 extension points), Changelog
+- [x] pkg/relay/stats_handler.go: StatsHandler — JSON + Prometheus text exposition format
+- [x] pkg/relay/stats_handler_test.go: 5 unit test (JSON, Prometheus via Accept/param, default, zero)
+- [x] cmd/nabu-relay/main.go: --stats-addr flag, /metrics + /stats endpoints, graceful shutdown
+- [x] git commit 55978f3 (Oturum 1.20)
 
 ## Yarım Kalanlar
-- Bant genişliği istatistikleri (bytes_in/out per stream) → Stats struct var ama Prometheus/HTTP endpoint yok
-- Faz 2 obfuscation layer henüz başlamadı
-- PROTOCOL.md güncellenmeli (Layer interface, X25519 DH detayları)
+- Faz 2 obfuscation layer henüz başlamadı (pkg/obfuscation boş)
+- Per-stream stats (bytes_in/out per streamID) — GlobalStats sadece server-wide
+- Anti-replay window (Faz 2 güvenlik iyileştirmesi)
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
