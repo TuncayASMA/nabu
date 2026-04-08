@@ -3,23 +3,21 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.21 (Tamamlandı)
+Oturum: 1.22 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — Obfuscation Layer
 - Sprint: 2 — Faz 2 Bootstrap
-- Oturum: 1.21 → Sonraki: 1.22 (Relay TCP listener — HTTPConnect karşı tarafı)
+- Oturum: 1.22 → Sonraki: 1.23 (TLS wrapping, per-stream stats)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.22 — Relay TCP Listener (HTTPConnect karşı tarafı):
-1. pkg/relay/tcp_server.go — TCP üzerinden length-prefix frame listener
-   - net.Listener (TCP), HTTP CONNECT handshake kabul (opsiyonel)
-   - Aynı dispatch/forwarding mantığı UDPServer ile paylaştır
-2. cmd/nabu-relay/main.go: --serve-tcp ve --tcp-addr flag'leri
-3. test/integration: HTTP CONNECT obfuscated uçtan uca echo testi
-   - HTTPConnect client → TCP relay → hedef echo sunucu
-4. PROTOCOL.md v1.2: §12 TCP Transport (length-prefix framing)
+Oturum 1.23 — TLS wrapping + per-stream stats:
+1. pkg/relay/tcp_server.go: --tcp-tls flag ile tls.Conn wrapping (self-signed cert)
+   - Passive observer sadece TLS ClientHello görür (HTTPS ile ayrımsız)
+2. pkg/relay/stats_handler.go: per-stream BytesIn/BytesOut (StreamID map)
+3. test/integration: TLS TCPServer echo testi
+4. PROTOCOL.md v1.3: §13 TLS Wrapping
 ```
 
 ## Tamamlananlar
@@ -150,11 +148,23 @@ Oturum 1.22 — Relay TCP Listener (HTTPConnect karşı tarafı):
 - [x] cmd/nabu-client/main.go: --obfuscation ve --obfs-proxy flag'leri eklendi
 - [x] Tüm testler geçti (go test -race ./...) — 8 paket + integration
 - [x] golangci-lint clean
-- [x] git commit 98dcb72 (Oturum 1.21)
-
-## Yarım Kalanlar
-- Relay TCP listener henüz yok (HTTPConnect client için karşı taraf) → Oturum 1.22
-- Integration test: HTTPConnect client → TCP relay → hedef echo → Oturum 1.22
+- [x] pkg/relay/tcp_server.go: TCPServer — HTTP CONNECT + length-prefix framing + X25519 DH + dispatch
+  - AcceptHTTPConnect=true: HTTP CONNECT preamble okur relay-side
+  - pipeTargetToClient: ctx-cancel ile goroutine temizleniyor
+  - handleConnect: remote param kaldırıldı (unused)
+- [x] cmd/nabu-relay/main.go: --serve-tcp, --tcp-addr, --tcp-http-connect flag'leri
+  - UDP goroutine ile eş zamanlı TCP relay başlatılıyor
+- [x] pkg/tunnel/relay_handler.go: NewRelayHandlerWithFactory() eklendi
+  - Her SOCKS5 session'da yeni Layer yaratır (TCP layer'lar için doğru yaklaşım)
+- [x] test/integration/helpers_test.go: dialSOCKS5() yardımcısı + socks5 import
+- [x] test/integration/http_connect_relay_test.go: 2 yeni integration test
+  - TestHTTPConnectRelayDirectEcho: HTTPConnect → TCPServer → echo (SOCKS5 yok)
+  - TestHTTPConnectViaTCPRelaySOCKS5: tam SOCKS5 → HTTPConnect → TCPServer yolu
+- [x] docs/PROTOCOL.md v1.2: §12 TCP Transport & HTTPConnect Obfuscation
+- [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL, goleak temiz
+- [x] golangci-lint clean
+- [x] git commit 34876f1 (Oturum 1.22)
+- TLS wrapping: TCPServer üzerine tls.Conn katmanı → Oturum 1.23
 - Per-stream stats (bytes_in/out per streamID) — GlobalStats sadece server-wide
 - Anti-replay window (Faz 2 güvenlik iyileştirmesi)
 
