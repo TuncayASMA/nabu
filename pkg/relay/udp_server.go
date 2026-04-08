@@ -43,6 +43,8 @@ type UDPServer struct {
 	// RateLimitPPS is the per-source IP:port rate limit in packets per second.
 	// Burst is set to 2×RateLimitPPS. Zero disables rate limiting.
 	RateLimitPPS int
+	// Stats exposes live server-wide traffic counters.
+	Stats        GlobalStats
 	conn         net.PacketConn
 	// streams: key=streamStateKey(streamID, remoteAddr), value=*StreamState
 	streams sync.Map
@@ -102,6 +104,23 @@ func (s *UDPServer) cleanupExpiredStreams(timeout time.Duration) {
 		}
 		return true
 	})
+}
+
+// shutdownGracefully sends a FIN frame to every active client stream, then
+// closes all target connections.  It is intended to be called via defer just
+// before the UDP listener is closed so that FIN writes can still succeed.
+func (s *UDPServer) shutdownGracefully() {
+	s.streams.Range(func(key, value interface{}) bool {
+		state := value.(*StreamState)
+		state.mu.Lock()
+		seq := atomic.AddUint32(&state.RelaySeq, 1)
+		addr := state.RemoteAddr
+		state.mu.Unlock()
+		// Best-effort: ignore errors — the listener may be closing.
+		_ = s.sendFINFrame(state.StreamID, seq, addr)
+		return true
+	})
+	s.closeAllStreams()
 }
 
 func (s *UDPServer) closeAllStreams() {
@@ -202,6 +221,10 @@ func (s *UDPServer) sendHandshakeACK(streamID uint16, ackSeq uint32, payload []b
 }
 
 func (s *UDPServer) sendFrame(frame transport.Frame, addr net.Addr) error {
+	// Track outbound payload bytes before encryption expands the payload.
+	s.Stats.FramesOut.Add(1)
+	s.Stats.BytesOut.Add(int64(len(frame.Payload)))
+
 	// Encrypt payload for non-handshake frames when a session key exists.
 	if (frame.Flags&transport.FlagHandshake == 0) && len(frame.Payload) > 0 {
 		if key := s.getSessionKey(addr); len(key) == nabuCrypto.AES256KeySize {
@@ -403,7 +426,7 @@ func (s *UDPServer) Start(ctx context.Context) error {
 	}
 	s.conn = pc
 	defer s.conn.Close()
-	defer s.closeAllStreams()
+	defer s.shutdownGracefully()
 
 	// Cleanup ticker for expired streams (every 5 seconds).
 	ticker := time.NewTicker(5 * time.Second)
@@ -447,6 +470,7 @@ func (s *UDPServer) Start(ctx context.Context) error {
 
 		// Per-source rate limiting: drop frames from misbehaving clients.
 		if s.rateLimiters != nil && !s.rateLimiters.Allow(addr.String()) {
+			s.Stats.DropsRL.Add(1)
 			s.Logger.Warn("rate limit exceeded, frame dropped", "remote", addr.String())
 			continue
 		}
@@ -468,6 +492,10 @@ func (s *UDPServer) Start(ctx context.Context) error {
 				frame.Payload = dec
 			}
 		}
+
+		// Track inbound traffic stats.
+		s.Stats.FramesIn.Add(1)
+		s.Stats.BytesIn.Add(int64(len(frame.Payload)))
 
 		// Track stream state on incoming frame.
 		key := streamStateKey(frame.StreamID, addr)
