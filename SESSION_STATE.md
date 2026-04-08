@@ -6,9 +6,13 @@ Tarih: 2026-04-09
 Oturum: 1.24 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
-- Faz: 2 — Obfuscation Layer
-- Sprint: 2 — Faz 2 Bootstrap
-- Oturum: 1.24 → Sonraki: 1.25 (WebSocket obfuscation veya metrics patcher / relay TLS cert pinning)
+- Faz: 2 — QUIC Maskeleme + Obfuscation Layer
+- Sprint: 8 — TCP/HTTPConnect/TLS Obfuscation (RUNBOOK Sprint 8 karşılığı)
+  - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
+  - ✅ TCPServer TLS wrapping (Oturum 1.23)
+  - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
+  - 🔜 WebSocket obfuscation veya relay TLS cert pinning (Oturum 1.25)
+- Oturum: 1.24 → Sonraki: 1.25 (WebSocket obfuscation veya relay TLS cert pinning)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
