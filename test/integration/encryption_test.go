@@ -185,3 +185,68 @@ func TestEncryptedTunnelMultiPayload(t *testing.T) {
 		}
 	}
 }
+
+// TestNoPSKClientRejectedByPSKRelay verifies that a client connecting without a
+// PSK cannot forward data through a PSK-protected relay. The relay drops all
+// non-handshake frames from unauthenticated sources, so the SOCKS5 handler
+// times out on the connect ACK and returns an error.
+func TestNoPSKClientRejectedByPSKRelay(t *testing.T) {
+	psk := []byte("nabu-integration-test-psk-32byt")
+
+	relayAddr := getFreeUDPAddr(t)
+
+	relayServer, err := relay.NewUDPServer(relayAddr, nil)
+	if err != nil {
+		t.Fatalf("new udp server: %v", err)
+	}
+	relayServer.AllowPrivateTargets = true
+	relayServer.PSK = psk // relay requires PSK
+
+	relayCtx, relayCancel := context.WithCancel(context.Background())
+	defer relayCancel()
+
+	go relayServer.Start(relayCtx) //nolint:errcheck
+
+	time.Sleep(120 * time.Millisecond)
+
+	echoAddr, cleanupEcho := startTCPEchoServer(t)
+	defer cleanupEcho()
+
+	// Client connects without a PSK (nil).
+	server := socks5.NewServer(":0")
+	server.RequestTimeout = 3 * time.Second
+	server.OnConnect = tunnel.NewRelayHandler(relayAddr, nil) // no PSK!
+
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	defer serverConn.Close()
+
+	socksErrCh := make(chan error, 1)
+	go func() {
+		socksErrCh <- server.HandleConn(serverConn)
+	}()
+
+	if _, err := client.Write([]byte{socks5.Version5, 1, socks5.NoAuth}); err != nil {
+		t.Fatalf("write greeting: %v", err)
+	}
+	if _, err := io.ReadFull(client, make([]byte, 2)); err != nil {
+		t.Fatalf("read greeting resp: %v", err)
+	}
+
+	host, port, _ := net.SplitHostPort(echoAddr)
+	req := append([]byte{socks5.Version5, socks5.CmdConnect, 0x00, socks5.AddrTypeIPv4}, net.ParseIP(host).To4()...)
+	portNum, _ := net.LookupPort("tcp", port)
+	req = append(req, byte(portNum>>8), byte(portNum))
+	if _, err := client.Write(req); err != nil {
+		t.Fatalf("write CONNECT: %v", err)
+	}
+
+	// The socks handler must fail or return an error response (relay drops frame).
+	select {
+	case err := <-socksErrCh:
+		// Any error is acceptable — the relay rejected the connection.
+		t.Logf("socks handler returned (expected): %v", err)
+	case <-time.After(6 * time.Second):
+		t.Fatal("expected socks handler to fail when PSK is missing, but it hung")
+	}
+}

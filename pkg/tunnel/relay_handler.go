@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -85,12 +84,18 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 	}
 }
 
-// performHandshake sends a FlagHandshake frame with a random 32-byte salt,
-// waits for the relay's Handshake|ACK, then derives and sets the session key.
+// performHandshake executes the X25519 key exchange with the relay.
+//
+// Protocol:
+//  1. Generate ephemeral X25519 key pair.
+//  2. Send FlagHandshake frame with Payload = clientPublicKey (32 B).
+//  3. Wait for relay's FlagHandshake|FlagACK with Payload = relayPublicKey (32 B).
+//  4. Compute shared secret and derive session key.
+//  5. Set UDPClient.SessionKey — all subsequent frames will be encrypted.
 func performHandshake(client *transport.UDPClient, psk []byte) error {
-	salt := make([]byte, 32)
-	if _, err := rand.Read(salt); err != nil {
-		return fmt.Errorf("salt generation failed: %w", err)
+	kp, err := nabuCrypto.GenerateX25519KeyPair()
+	if err != nil {
+		return fmt.Errorf("client keygen failed: %w", err)
 	}
 
 	if err := client.SendFrame(transport.Frame{
@@ -98,7 +103,7 @@ func performHandshake(client *transport.UDPClient, psk []byte) error {
 		Flags:    transport.FlagHandshake,
 		StreamID: 0,
 		Seq:      1,
-		Payload:  salt,
+		Payload:  kp.Public[:],
 	}); err != nil {
 		return fmt.Errorf("send handshake frame failed: %w", err)
 	}
@@ -107,17 +112,28 @@ func performHandshake(client *transport.UDPClient, psk []byte) error {
 	client.ReadTimeout = defaultAckTimeout
 	defer func() { client.ReadTimeout = prev }()
 
+	var relayPub []byte
 	for {
 		frame, err := client.ReceiveFrame()
 		if err != nil {
 			return fmt.Errorf("receive handshake ack failed: %w", err)
 		}
 		if frame.Flags&transport.FlagHandshake != 0 && frame.Flags&transport.FlagACK != 0 {
+			relayPub = frame.Payload
 			break
 		}
 	}
 
-	key, err := nabuCrypto.DeriveSessionKey(psk, salt, nabuCrypto.AES256KeySize)
+	if len(relayPub) != nabuCrypto.X25519PublicKeySize {
+		return fmt.Errorf("handshake ack: bad relay pubkey length %d", len(relayPub))
+	}
+
+	shared, err := nabuCrypto.X25519SharedSecret(kp.Private[:], relayPub)
+	if err != nil {
+		return fmt.Errorf("X25519 shared secret failed: %w", err)
+	}
+
+	key, err := nabuCrypto.DeriveSessionKeyX25519(psk, shared, kp.Public[:], relayPub)
 	if err != nil {
 		return fmt.Errorf("derive session key failed: %w", err)
 	}

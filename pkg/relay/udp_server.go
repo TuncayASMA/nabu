@@ -138,37 +138,53 @@ func (s *UDPServer) removeSessionKey(addr net.Addr) {
 	s.sessions.Delete(addr.String())
 }
 
-// handleHandshakeFrame derives the session key from the PSK + client salt
-// and stores it keyed by remoteAddr. Returns the ACK to send back.
+// handleHandshakeFrame performs the relay side of the X25519 key exchange.
+//
+// Protocol (PSK mode):
+//   - Client sends FlagHandshake with Payload = clientPublicKey (32 B).
+//   - Relay generates ephemeral X25519 key pair, computes shared secret, derives
+//     session key via HKDF(PSK || shared, clientPub || relayPub), stores it.
+//   - Relay replies with FlagHandshake|FlagACK and Payload = relayPublicKey (32 B).
+//
+// Without PSK the relay echoes ACK with no payload (unencrypted mode).
 func (s *UDPServer) handleHandshakeFrame(frame transport.Frame, addr net.Addr) error {
 	if len(s.PSK) == 0 {
-		// No PSK configured — ignore handshake (relay runs unencrypted).
-		return s.sendFrame(transport.Frame{
-			Version:  transport.FrameVersion,
-			Flags:    transport.FlagHandshake | transport.FlagACK,
-			StreamID: frame.StreamID,
-			Ack:      frame.Seq,
-		}, addr)
+		// No PSK — accept connections unencrypted.
+		return s.sendHandshakeACK(frame.StreamID, frame.Seq, nil, addr)
 	}
-	if len(frame.Payload) == 0 {
-		return fmt.Errorf("handshake frame missing salt payload")
+	if len(frame.Payload) != nabuCrypto.X25519PublicKeySize {
+		return fmt.Errorf("handshake frame: bad client pubkey length %d", len(frame.Payload))
 	}
-	key, err := nabuCrypto.DeriveSessionKey(s.PSK, frame.Payload, nabuCrypto.AES256KeySize)
+	clientPub := frame.Payload
+
+	kp, err := nabuCrypto.GenerateX25519KeyPair()
+	if err != nil {
+		return fmt.Errorf("relay keygen failed: %w", err)
+	}
+
+	shared, err := nabuCrypto.X25519SharedSecret(kp.Private[:], clientPub)
+	if err != nil {
+		return fmt.Errorf("X25519 shared secret failed: %w", err)
+	}
+
+	key, err := nabuCrypto.DeriveSessionKeyX25519(s.PSK, shared, clientPub, kp.Public[:])
 	if err != nil {
 		return fmt.Errorf("session key derivation failed: %w", err)
 	}
 	s.setSessionKey(addr, key)
-	// ACK is sent before key is used for encryption (client sets key after ACK).
-	return s.sendHandshakeACK(frame.StreamID, frame.Seq, addr)
+	// ACK carries relay pubkey so client can compute the same session key.
+	return s.sendHandshakeACK(frame.StreamID, frame.Seq, kp.Public[:], addr)
 }
 
 // sendHandshakeACK sends a plaintext (never encrypted) handshake ACK.
-func (s *UDPServer) sendHandshakeACK(streamID uint16, ackSeq uint32, addr net.Addr) error {
+// payload carries the relay's ephemeral public key (nil when not using PSK).
+func (s *UDPServer) sendHandshakeACK(streamID uint16, ackSeq uint32, payload []byte, addr net.Addr) error {
 	frame := transport.Frame{
 		Version:  transport.FrameVersion,
 		Flags:    transport.FlagHandshake | transport.FlagACK,
 		StreamID: streamID,
 		Ack:      ackSeq,
+		Payload:  payload,
 	}
 	raw, err := transport.EncodeFrame(frame)
 	if err != nil {
@@ -455,23 +471,33 @@ func (s *UDPServer) Start(ctx context.Context) error {
 			}
 		case frame.Flags&transport.FlagACK != 0:
 			continue
-		case frame.Flags&transport.FlagConnect != 0:
-			if err := s.handleConnectFrame(key, state, frame, addr); err != nil {
-				s.Logger.Warn("connect frame handling failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
-				continue
-			}
-		case frame.Flags&transport.FlagFIN != 0:
-			if err := s.sendACKFrame(frame.StreamID, frame.Seq, addr); err != nil {
-				s.Logger.Warn("fin ack send failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
-			}
-			s.closeStream(key, state)
-		case frame.Flags&transport.FlagData != 0:
-			if err := s.handleDataFrame(state, frame, addr); err != nil {
-				s.Logger.Warn("data frame handling failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
-				continue
-			}
 		default:
-			s.Logger.Warn("unsupported frame flags", "remote", addr.String(), "stream", frame.StreamID, "flags", frame.Flags)
+			// If PSK is enabled, require a completed handshake before processing
+			// any DATA/CONNECT/FIN frame. Drop silently to avoid leaking state.
+			if len(s.PSK) > 0 && len(s.getSessionKey(addr)) == 0 {
+				s.Logger.Warn("frame dropped: no session key (handshake required)", "remote", addr.String(), "flags", frame.Flags)
+				continue
+			}
+
+			switch {
+			case frame.Flags&transport.FlagConnect != 0:
+				if err := s.handleConnectFrame(key, state, frame, addr); err != nil {
+					s.Logger.Warn("connect frame handling failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
+					continue
+				}
+			case frame.Flags&transport.FlagFIN != 0:
+				if err := s.sendACKFrame(frame.StreamID, frame.Seq, addr); err != nil {
+					s.Logger.Warn("fin ack send failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
+				}
+				s.closeStream(key, state)
+			case frame.Flags&transport.FlagData != 0:
+				if err := s.handleDataFrame(state, frame, addr); err != nil {
+					s.Logger.Warn("data frame handling failed", "remote", addr.String(), "stream", frame.StreamID, "error", err)
+					continue
+				}
+			default:
+				s.Logger.Warn("unsupported frame flags", "remote", addr.String(), "stream", frame.StreamID, "flags", frame.Flags)
+			}
 		}
 	}
 }
