@@ -11,11 +11,13 @@ const (
 	HeaderSize   = 12
 	MaxPayload   = 64 * 1024
 
-        FlagData      = 0x01
-        FlagConnect   = 0x02
-        FlagFIN       = 0x04
-        FlagHandshake = 0x40 // PSK-based session key negotiation
-        FlagACK       = 0x80
+	FlagData      = 0x01
+	FlagConnect   = 0x02
+	FlagFIN       = 0x04
+	FlagPing      = 0x08 // RTT probe: sender wants a Pong reply
+	FlagPong      = 0x10 // RTT probe reply to a Ping
+	FlagHandshake = 0x40 // PSK-based session key negotiation
+	FlagACK       = 0x80
 )
 
 var (

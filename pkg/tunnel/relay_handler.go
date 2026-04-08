@@ -19,6 +19,9 @@ const clientChunkSize = 1300
 const (
 	defaultAckTimeout = 1200 * time.Millisecond
 	maxSendRetries    = 3
+	minRTTBackoff     = 100 * time.Millisecond
+	maxRTTBackoff     = 4 * time.Second
+	rttSlop           = 50 * time.Millisecond // safety margin added to raw RTT
 )
 
 var nextStreamID uint32
@@ -42,7 +45,20 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 			}
 		}
 
+		// Measure RTT to use as the base for adaptive retry timeouts.
+		// Fall back to defaultAckTimeout if the ping fails (e.g., relay too old).
 		streamID := uint16(atomic.AddUint32(&nextStreamID, 1))
+		baseTimeout := defaultAckTimeout
+		if rtt, rttErr := udpClient.MeasureRTT(streamID, 0); rttErr == nil && rtt > 0 {
+			baseTimeout = rtt*2 + rttSlop
+			if baseTimeout < minRTTBackoff {
+				baseTimeout = minRTTBackoff
+			}
+			if baseTimeout > maxRTTBackoff {
+				baseTimeout = maxRTTBackoff
+			}
+		}
+
 		connectSeq := uint32(1)
 		if err := udpClient.SendFrame(transport.Frame{
 			Version:  transport.FrameVersion,
@@ -55,7 +71,7 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 		}
 
 		prevReadTimeout := udpClient.ReadTimeout
-		udpClient.ReadTimeout = defaultAckTimeout
+		udpClient.ReadTimeout = baseTimeout
 		defer func() {
 			udpClient.ReadTimeout = prevReadTimeout
 		}()
@@ -74,7 +90,7 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 			})
 		}
 
-		go pipeConnToRelay(conn, udpClient, streamID, ackCh, shutdown)
+		go pipeConnToRelay(conn, udpClient, streamID, ackCh, baseTimeout, shutdown)
 		go pipeRelayToConn(conn, udpClient, streamID, ackCh, shutdown)
 
 		if err := <-resultCh; err != nil && err != io.EOF {
@@ -159,20 +175,23 @@ func waitForAck(client *transport.UDPClient, streamID uint16, seq uint32) error 
 	}
 }
 
-func sendFrameWithRetry(client *transport.UDPClient, frame transport.Frame, ackCh <-chan uint32) error {
-	backoff := 300 * time.Millisecond
+func sendFrameWithRetry(client *transport.UDPClient, frame transport.Frame, ackCh <-chan uint32, baseTimeout time.Duration) error {
+	backoff := baseTimeout
+	if backoff < minRTTBackoff {
+		backoff = minRTTBackoff
+	}
 	var lastErr error
 	for attempt := 0; attempt < maxSendRetries; attempt++ {
 		if err := client.SendFrame(frame); err != nil {
 			lastErr = err
 			time.Sleep(backoff)
-			backoff = min(backoff*2, 4*time.Second)
+			backoff = min(backoff*2, maxRTTBackoff)
 			continue
 		}
 
-		if err := waitForAckSeq(ackCh, frame.Seq, defaultAckTimeout+backoff); err != nil {
+		if err := waitForAckSeq(ackCh, frame.Seq, backoff); err != nil {
 			lastErr = err
-			backoff = min(backoff*2, 4*time.Second)
+			backoff = min(backoff*2, maxRTTBackoff)
 			continue
 		}
 
@@ -201,7 +220,7 @@ func waitForAckSeq(ackCh <-chan uint32, expectedSeq uint32, timeout time.Duratio
 	}
 }
 
-func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh <-chan uint32, shutdown func(error)) {
+func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16, ackCh <-chan uint32, baseTimeout time.Duration, shutdown func(error)) {
 	buf := make([]byte, clientChunkSize)
 	seq := uint32(2)
 	for {
@@ -214,7 +233,7 @@ func pipeConnToRelay(conn net.Conn, client *transport.UDPClient, streamID uint16
 				StreamID: streamID,
 				Seq:      seq,
 				Payload:  payload,
-			}, ackCh); sendErr != nil {
+			}, ackCh, baseTimeout); sendErr != nil {
 				shutdown(fmt.Errorf("send data frame failed: %w", sendErr))
 				return
 			}

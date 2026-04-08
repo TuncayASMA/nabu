@@ -107,3 +107,45 @@ func (c *UDPClient) ReceiveFrame() (Frame, error) {
 	}
 	return frame, nil
 }
+
+// MeasureRTT sends a single Ping frame and waits for the matching Pong reply.
+// It returns the round-trip time or an error if the exchange times out.
+// The caller should use a deadline-aware context or set ReadTimeout accordingly.
+func (c *UDPClient) MeasureRTT(streamID uint16, seq uint32) (time.Duration, error) {
+	if c.conn == nil {
+		return 0, fmt.Errorf("udp client not connected")
+	}
+
+	ping := Frame{
+		Version:  FrameVersion,
+		Flags:    FlagPing,
+		StreamID: streamID,
+		Seq:      seq,
+	}
+
+	start := time.Now()
+	if err := c.SendFrame(ping); err != nil {
+		return 0, fmt.Errorf("ping send failed: %w", err)
+	}
+
+	// Drain frames until we see the matching Pong.
+	deadline := time.Now().Add(c.ReadTimeout)
+	for time.Now().Before(deadline) {
+		if err := c.conn.SetReadDeadline(deadline); err != nil {
+			return 0, fmt.Errorf("set read deadline: %w", err)
+		}
+		buf := make([]byte, HeaderSize+MaxPayload)
+		n, err := c.conn.Read(buf)
+		if err != nil {
+			return 0, fmt.Errorf("pong read failed: %w", err)
+		}
+		f, err := DecodeFrame(buf[:n])
+		if err != nil {
+			continue // skip malformed frame
+		}
+		if f.Flags&FlagPong != 0 && f.Ack == seq {
+			return time.Since(start), nil
+		}
+	}
+	return 0, fmt.Errorf("pong timeout after %v", c.ReadTimeout)
+}

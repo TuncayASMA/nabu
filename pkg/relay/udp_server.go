@@ -483,6 +483,17 @@ func (s *UDPServer) Start(ctx context.Context) error {
 			if err := s.handleHandshakeFrame(frame, addr); err != nil {
 				s.Logger.Warn("handshake frame handling failed", "remote", addr.String(), "error", err)
 			}
+		case frame.Flags&transport.FlagPing != 0:
+			// Respond with a Pong frame — echo the Seq so the client can match it.
+			pong := transport.Frame{
+				Version:  transport.FrameVersion,
+				Flags:    transport.FlagPong,
+				StreamID: frame.StreamID,
+				Ack:      frame.Seq,
+			}
+			if err := s.sendFrame(pong, addr); err != nil {
+				s.Logger.Warn("pong send failed", "remote", addr.String(), "error", err)
+			}
 		case frame.Flags&transport.FlagACK != 0:
 			continue
 		default:
