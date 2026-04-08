@@ -1,0 +1,52 @@
+# golangci-lint configuration for nabu
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    # correctness
+    - errcheck          # unchecked error returns
+    - gosimple          # simplifiable code
+    - govet             # go vet analysis passes
+    - ineffassign       # assigned but never used
+    - staticcheck       # staticcheck SA rules
+    - unused            # unused code
+    # style / quality
+    - gofmt             # formatting
+    - goimports         # import grouping & formatting
+    - misspell          # typos in comments/strings
+    - unconvert         # unnecessary type conversions
+    - unparam           # unused function parameters
+    # security
+    - gosec             # OWASP-level security checks
+
+linters-settings:
+  errcheck:
+    # Ignore error returns on Close() calls — common pattern
+    exclude-functions:
+      - (io.Closer).Close
+      - (*net.UDPConn).Close
+      - (*net.TCPConn).Close
+
+  gosec:
+    excludes:
+      - G115  # integer overflow on explicit bit conversions (binary.BigEndian patterns)
+
+  goimports:
+    local-prefixes: github.com/TuncayASMA/nabu
+
+issues:
+  exclude-rules:
+    # Allow fmt.Printf in main() version output
+    - path: cmd/
+      text: "fmt.Printf"
+      linters: [forbidigo]
+    # Test files: allow unused params, long functions
+    - path: _test\.go
+      linters: [unparam, gosec]
+  max-issues-per-linter: 0
+  max-same-issues: 0

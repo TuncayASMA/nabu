@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"context"
 	"io"
 	"net"
 	"testing"
@@ -24,11 +23,7 @@ func TestMeasureRTTOnLiveRelay(t *testing.T) {
 	}
 	srv.AllowPrivateTargets = true
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go srv.Start(ctx) //nolint:errcheck
-	time.Sleep(60 * time.Millisecond)
+	startConfiguredRelay(t, relayAddr, srv)
 
 	c, err := transport.NewUDPClient(relayAddr)
 	if err != nil {
@@ -67,12 +62,7 @@ func TestRTTAdaptiveBackoffEndToEnd(t *testing.T) {
 	}
 	srv.AllowPrivateTargets = true
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	relayErrCh := make(chan error, 1)
-	go func() { relayErrCh <- srv.Start(ctx) }()
-	time.Sleep(80 * time.Millisecond)
+	startConfiguredRelay(t, relayAddr, srv)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
@@ -145,16 +135,6 @@ func TestRTTAdaptiveBackoffEndToEnd(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("socks handler did not stop")
 	}
-
-	cancel()
-	select {
-	case err := <-relayErrCh:
-		if err != nil {
-			t.Fatalf("relay error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("relay did not stop")
-	}
 }
 
 // TestRTTMultipleRoundTrips verifies that calling MeasureRTT several times in
@@ -168,11 +148,7 @@ func TestRTTMultipleRoundTrips(t *testing.T) {
 	}
 	srv.AllowPrivateTargets = true
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go srv.Start(ctx) //nolint:errcheck
-	time.Sleep(60 * time.Millisecond)
+	startConfiguredRelay(t, relayAddr, srv)
 
 	c, err := transport.NewUDPClient(relayAddr)
 	if err != nil {

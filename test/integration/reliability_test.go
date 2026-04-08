@@ -1,31 +1,12 @@
 package integration
 
 import (
-	"context"
 	"net"
 	"testing"
 	"time"
 
-	"github.com/TuncayASMA/nabu/pkg/relay"
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
-
-// startRelayServer starts a UDPServer and returns its address plus a cancel func.
-func startRelayServer(t *testing.T) (string, context.CancelFunc, <-chan error) {
-	t.Helper()
-	addr := getFreeUDPAddr(t)
-	s, err := relay.NewUDPServer(addr, nil)
-	if err != nil {
-		t.Fatalf("new relay server failed: %v", err)
-	}
-	s.AllowPrivateTargets = true
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- s.Start(ctx) }()
-	time.Sleep(120 * time.Millisecond)
-	return addr, cancel, errCh
-}
 
 // dialRelayStream connects to a relay, sends CONNECT, waits for ACK, and returns the client.
 func dialRelayStream(t *testing.T, relayAddr, targetAddr string, streamID uint16, connectSeq uint32) *transport.UDPClient {

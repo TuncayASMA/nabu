@@ -6,13 +6,45 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  GO_VERSION: "1.26.x"
+  COVERAGE_THRESHOLD: "60"   # pkg/relay coverage ~60%+ (integration tests cover the rest)
+
 jobs:
-  test:
-    name: Test (Go ${{ matrix.go-version }})
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ["1.25.x"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt check
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Unformatted files:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test:
+    name: Unit + Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint]
 
     steps:
       - uses: actions/checkout@v4
@@ -20,34 +52,41 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Vet
-        run: go vet ./...
+      - name: Unit Tests (race detector)
+        run: go test -v -race -timeout 90s -coverprofile=coverage.out -covermode=atomic ./pkg/...
 
-      - name: Unit Tests
-        run: go test -v -timeout 60s -race ./pkg/...
+      - name: Integration Tests (race detector)
+        run: go test -v -race -timeout 120s ./test/integration/...
+
+      - name: Coverage check
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if [ "$(echo "$COVERAGE < ${{ env.COVERAGE_THRESHOLD }}" | bc -l)" = "1" ]; then
+            echo "Coverage ${COVERAGE}% is below threshold ${{ env.COVERAGE_THRESHOLD }}%"
+            exit 1
+          fi
+
+      - name: Coverage report (HTML artifact)
+        if: always()
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.html
+          retention-days: 14
 
       - name: Build check (linux/amd64)
         run: GOOS=linux GOARCH=amd64 go build ./...
 
       - name: Build check (linux/arm64)
         run: GOOS=linux GOARCH=arm64 go build ./...
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.x"
-          cache: true
-      - name: gofmt check
-        run: test -z "$(gofmt -l .)"
-      - name: go vet
-        run: go vet ./...
 
   build-matrix:
     name: Cross-compile
@@ -59,19 +98,37 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            suffix: linux-amd64
           - goos: linux
             goarch: arm64
+            suffix: linux-arm64
           - goos: darwin
             goarch: arm64
+            suffix: darwin-arm64
           - goos: windows
             goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build ./cmd/nabu-client ./cmd/nabu-relay
+        run: |
+          mkdir -p dist
+          go build -ldflags="-s -w" -o dist/nabu-client-${{ matrix.suffix }}${{ matrix.ext }} ./cmd/nabu-client
+          go build -ldflags="-s -w" -o dist/nabu-relay-${{ matrix.suffix }}${{ matrix.ext }} ./cmd/nabu-relay
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: nabu-${{ matrix.suffix }}
+          path: dist/
+          retention-days: 30

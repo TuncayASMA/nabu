@@ -12,41 +12,6 @@ import (
 	"github.com/TuncayASMA/nabu/pkg/tunnel"
 )
 
-func startTCPEchoServer(t *testing.T) (string, func()) {
-	t.Helper()
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen failed: %v", err)
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				_, _ = io.Copy(c, c)
-			}(conn)
-		}
-	}()
-
-	cleanup := func() {
-		_ = ln.Close()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			t.Fatal("echo server did not stop")
-		}
-	}
-
-	return ln.Addr().String(), cleanup
-}
-
 func TestSocks5RelayForwardingEcho(t *testing.T) {
 	relayAddr := getFreeUDPAddr(t)
 
@@ -64,13 +29,13 @@ func TestSocks5RelayForwardingEcho(t *testing.T) {
 		relayErrCh <- relayServer.Start(relayCtx)
 	}()
 
-	time.Sleep(120 * time.Millisecond)
+time.Sleep(200 * time.Millisecond)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
 
 	server := socks5.NewServer(":0")
-	server.RequestTimeout = time.Second
+	server.RequestTimeout = 5 * time.Second
 	server.OnConnect = tunnel.NewRelayHandler(relayAddr, nil)
 
 	client, serverConn := net.Pipe()

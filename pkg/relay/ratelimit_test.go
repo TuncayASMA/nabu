@@ -78,9 +78,12 @@ func TestRateLimiterMapIsolation(t *testing.T) {
 }
 
 // TestTokenBucketConcurrency checks that concurrent Allow calls don't race.
+// rate=1 pps so the bucket refills at most once per second — far slower than
+// the test completes, making the burst=100 assertion deterministic even under
+// the race detector.
 func TestTokenBucketConcurrency(t *testing.T) {
 	t.Parallel()
-	tb := NewTokenBucket(1000, 100)
+	tb := NewTokenBucket(1, 100)
 	var wg sync.WaitGroup
 	allowed := make(chan bool, 200)
 

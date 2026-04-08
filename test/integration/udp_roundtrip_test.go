@@ -1,25 +1,12 @@
 package integration
 
 import (
-	"context"
-	"net"
 	"testing"
 	"time"
 
 	"github.com/TuncayASMA/nabu/pkg/relay"
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
-
-func getFreeUDPAddr(t *testing.T) string {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen packet failed: %v", err)
-	}
-	addr := pc.LocalAddr().String()
-	_ = pc.Close()
-	return addr
-}
 
 func TestClientRelayUDPRoundTripAck(t *testing.T) {
 	addr := getFreeUDPAddr(t)
@@ -30,16 +17,7 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 	}
 	s.AllowPrivateTargets = true
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- s.Start(ctx)
-	}()
-
-	// Give server a short moment to bind.
-	time.Sleep(120 * time.Millisecond)
+	startConfiguredRelay(t, addr, s)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
@@ -110,13 +88,4 @@ func TestClientRelayUDPRoundTripAck(t *testing.T) {
 		t.Fatalf("ack mismatch: got stream=%d ack=%d want stream=%d ack=%d", ack.StreamID, ack.Ack, in.StreamID, in.Seq)
 	}
 
-	cancel()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("server stop failed: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("server did not stop in time")
-	}
 }

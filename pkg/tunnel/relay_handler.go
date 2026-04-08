@@ -72,11 +72,9 @@ func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 
 		prevReadTimeout := udpClient.ReadTimeout
 		udpClient.ReadTimeout = baseTimeout
-		defer func() {
-			udpClient.ReadTimeout = prevReadTimeout
-		}()
 
 		if err := waitForAck(udpClient, streamID, connectSeq); err != nil {
+			udpClient.ReadTimeout = prevReadTimeout
 			return fmt.Errorf("wait for connect ack failed: %w", err)
 		}
 

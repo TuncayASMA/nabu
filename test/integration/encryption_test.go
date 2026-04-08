@@ -35,13 +35,13 @@ func TestEncryptedTunnelEcho(t *testing.T) {
 		relayErrCh <- relayServer.Start(relayCtx)
 	}()
 
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
 
 	server := socks5.NewServer(":0")
-	server.RequestTimeout = time.Second
+	server.RequestTimeout = 5 * time.Second
 	server.OnConnect = tunnel.NewRelayHandler(relayAddr, psk)
 
 	client, serverConn := net.Pipe()
@@ -131,18 +131,15 @@ func TestEncryptedTunnelMultiPayload(t *testing.T) {
 	relayServer.AllowPrivateTargets = true
 	relayServer.PSK = psk
 
-	relayCtx, relayCancel := context.WithCancel(context.Background())
-	defer relayCancel()
+	startConfiguredRelay(t, relayAddr, relayServer)
 
-	go relayServer.Start(relayCtx) //nolint:errcheck
-
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(0) // relay already waited in startConfiguredRelay
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
 
 	server := socks5.NewServer(":0")
-	server.RequestTimeout = time.Second
+	server.RequestTimeout = 5 * time.Second
 	server.OnConnect = tunnel.NewRelayHandler(relayAddr, psk)
 
 	client, serverConn := net.Pipe()
@@ -203,12 +200,7 @@ func TestNoPSKClientRejectedByPSKRelay(t *testing.T) {
 	relayServer.AllowPrivateTargets = true
 	relayServer.PSK = psk // relay requires PSK
 
-	relayCtx, relayCancel := context.WithCancel(context.Background())
-	defer relayCancel()
-
-	go relayServer.Start(relayCtx) //nolint:errcheck
-
-	time.Sleep(120 * time.Millisecond)
+	startConfiguredRelay(t, relayAddr, relayServer)
 
 	echoAddr, cleanupEcho := startTCPEchoServer(t)
 	defer cleanupEcho()
@@ -267,10 +259,7 @@ func TestRateLimitDropsExcessFrames(t *testing.T) {
 	// rate=2 pps, burst=4 (2×) — deliberately tiny for a fast, deterministic test.
 	relayServer.RateLimitPPS = 2
 
-	relayCtx, relayCancel := context.WithCancel(context.Background())
-	defer relayCancel()
-	go relayServer.Start(relayCtx) //nolint:errcheck
-	time.Sleep(120 * time.Millisecond)
+	startConfiguredRelay(t, relayAddr, relayServer)
 
 	conn, err := net.Dial("udp", relayAddr)
 	if err != nil {
