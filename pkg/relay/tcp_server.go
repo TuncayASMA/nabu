@@ -3,6 +3,7 @@ package relay
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -40,6 +41,9 @@ type TCPServer struct {
 	// AcceptHTTPConnect, when true, performs an HTTP/1.1 CONNECT handshake on
 	// each incoming connection before starting the NABU frame exchange.
 	AcceptHTTPConnect bool
+	// TLSConfig, when non-nil, wraps every accepted connection with TLS.
+	// A passive DPI observer sees only TLS ClientHello (indistinguishable from HTTPS).
+	TLSConfig *tls.Config
 	// Stats exposes server-wide traffic counters.
 	Stats GlobalStats
 
@@ -63,13 +67,22 @@ func NewTCPServer(listenAddr string, logger *slog.Logger) (*TCPServer, error) {
 // Start listens for TCP connections and dispatches each to a goroutine.
 // It blocks until ctx is cancelled or a fatal listen error occurs.
 func (s *TCPServer) Start(ctx context.Context) error {
-	ln, err := net.Listen("tcp", s.ListenAddr)
+	tcpLn, err := net.Listen("tcp", s.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("tcp listen failed: %w", err)
 	}
+
+	// Optionally wrap with TLS.
+	var ln net.Listener
+	if s.TLSConfig != nil {
+		ln = tls.NewListener(tcpLn, s.TLSConfig)
+	} else {
+		ln = tcpLn
+	}
 	defer ln.Close()
 
-	s.Logger.Info("TCPServer listening", "addr", s.ListenAddr, "http_connect", s.AcceptHTTPConnect)
+	tls_ := s.TLSConfig != nil
+	s.Logger.Info("TCPServer listening", "addr", s.ListenAddr, "http_connect", s.AcceptHTTPConnect, "tls", tls_)
 
 	go func() {
 		<-ctx.Done()
@@ -456,6 +469,7 @@ func (s *TCPServer) handleData(conn net.Conn, state *StreamState, frame transpor
 		if _, err := targetConn.Write(payload); err != nil {
 			return fmt.Errorf("target write: %w", err)
 		}
+		state.BytesIn.Add(int64(len(payload)))
 	}
 	return s.writeACK(conn, frame.StreamID, deliveredSeq, sessionKey)
 }
@@ -474,6 +488,7 @@ func (s *TCPServer) pipeTargetToClient(ctx context.Context, conn net.Conn, key s
 		n, err := targetConn.Read(buf)
 		if n > 0 {
 			payload := append([]byte(nil), buf[:n]...)
+			state.BytesOut.Add(int64(n))
 			dataFrame := transport.Frame{
 				Version:  transport.FrameVersion,
 				Flags:    transport.FlagData,

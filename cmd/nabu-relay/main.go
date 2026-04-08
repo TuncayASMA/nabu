@@ -28,6 +28,9 @@ func main() {
 	serveTCP := flag.Bool("serve-tcp", false, "TCP relay listener baslat (HTTPConnect obfuscation için)")
 	tcpAddr := flag.String("tcp-addr", ":8443", "TCP relay dinleme adresi (serve-tcp=true ise kullanılır)")
 	acceptHTTPConnect := flag.Bool("tcp-http-connect", true, "TCP listener'da HTTP CONNECT handshake bekle")
+	tcpTLS := flag.Bool("tcp-tls", false, "TCP relay'i TLS ile sar (HTTPS görünümü)")
+	tcpCert := flag.String("tcp-cert", "", "TLS sertifika dosyası (PEM); bosssa self-signed otomatik üretilir")
+	tcpKey := flag.String("tcp-key", "", "TLS anahtar dosyası (PEM); bosssa self-signed otomatik üretilir")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
@@ -135,7 +138,19 @@ func main() {
 			tcpServer.PSK = []byte(*psk)
 		}
 		tcpServer.AcceptHTTPConnect = *acceptHTTPConnect
-		log.Info("TCP relay başlıyor", slog.String("addr", *tcpAddr), slog.Bool("http_connect", *acceptHTTPConnect))
+		if *tcpTLS {
+			tlsCfg, err := relay.BuildTLSConfig(*tcpCert, *tcpKey)
+			if err != nil {
+				log.Error("TLS konfigürasyonu olusturulamadi", slog.Any("err", err))
+				os.Exit(1)
+			}
+			tcpServer.TLSConfig = tlsCfg
+		}
+		log.Info("TCP relay başlıyor",
+			slog.String("addr", *tcpAddr),
+			slog.Bool("http_connect", *acceptHTTPConnect),
+			slog.Bool("tls", *tcpTLS),
+		)
 		go func() {
 			if err := tcpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("tcp relay hatasi", slog.Any("err", err))

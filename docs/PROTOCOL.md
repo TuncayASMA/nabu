@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 1.2 (Faz 2 — TCP Transport + HTTPConnect Obfuscation)  
-**Status:** Reference implementation complete; Faz 2 obfuscation operational  
+**Version:** 1.3 (Faz 2 — TLS Wrapping + Per-stream Stats)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -20,8 +20,9 @@
 10. [Rate Limiting](#rate-limiting)
 11. [Transport Abstraction (Layer Interface)](#transport-abstraction-faz-2-prep)
 12. [TCP Transport & HTTPConnect Obfuscation](#tcp-transport--httpconnect-obfuscation)
-13. [Security Considerations](#security-considerations)
-14. [Changelog](#changelog)
+13. [TLS Wrapping (Faz 2 — DPI Evasion)](#tls-wrapping-faz-2--dpi-evasion)
+14. [Security Considerations](#security-considerations)
+15. [Changelog](#changelog)
 
 ---
 
@@ -507,10 +508,103 @@ This is the correct approach for `http-connect` mode. `NewRelayHandlerWithLayer`
 
 ---
 
-## Changelog
+## TLS Wrapping (Faz 2 — DPI Evasion)
+
+### Motivation
+
+Although the NABU frame payload is already encrypted with AES-256-GCM, the
+TCP stream itself is a custom binary protocol.  A stateful DPI firewall can
+identify it as non-HTTPS by inspecting the first bytes.  Wrapping the TCP
+connection with TLS 1.3 makes the entire session appear as ordinary HTTPS
+traffic: the observer sees a valid TLS ClientHello followed by opaque
+application data records — indistinguishable from an HTTPS(443) connection.
+
+### Architecture
+
+```
+Client (nabu-client)          Relay (nabu-relay)
+─────────────────             ─────────────────────────
+tls.Dial(relayAddr)  ───TLS Handshake───►  tls.NewListener
+                                ↓
+                        (optional HTTP CONNECT)
+                                ↓
+                      [NABU length-prefix framing]
+```
+
+When `--tcp-tls` is enabled on the relay, every `Accept()`-ed connection is a
+`*tls.Conn`. The rest of the dispatch pipeline (HTTP CONNECT handshake,
+X25519 DH, AES-256-GCM encryption, frame framing) runs identically on top of
+the TLS stream.
+
+### Configuration
+
+#### Relay-side flags (`nabu-relay`)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tcp-tls` | `false` | Wrap TCP relay with TLS 1.3 |
+| `--tcp-cert` | `""` | PEM certificate file; if empty a self-signed cert is generated in memory |
+| `--tcp-key` | `""` | PEM private key file; paired with `--tcp-cert` |
+
+#### Self-signed Certificate
+
+When `--tcp-cert` / `--tcp-key` are not provided, `relay.BuildTLSConfig` generates
+a fresh ECDSA P-256 certificate on startup:
+
+```
+ Subject: CN=nabu-relay
+ KeyUsage: DigitalSignature  ExtKeyUsage: ServerAuth
+ Valid: -1h → +2y (from startup time)
+```
+
+The certificate is different on every restart.  In production, operators should
+provide a real certificate (e.g. from Let's Encrypt) so that the SNI hostname
+matches a legitimate domain.
+
+### TLS Config Parameters
+
+```go
+tls.Config{
+    Certificates: []tls.Certificate{cert},
+    MinVersion:   tls.VersionTLS13,
+}
+```
+
+TLS 1.3 is **mandatory** (`MinVersion: tls.VersionTLS13`).  This eliminates
+acknowledgeable fingerprinting vectors present in TLS 1.2 (cipher suite ordering,
+estension list).
+
+### Client-side Integration
+
+For test clients or custom client implementations, use `obfuscation.WrapConn`
+to obtain a `transport.Layer` over an already-dialled `*tls.Conn`:
+
+```go
+tlsConn, err := tls.Dial("tcp", relayAddr, &tls.Config{
+    InsecureSkipVerify: true, // only in tests; use trusted cert in prod
+    MinVersion: tls.VersionTLS13,
+})
+layer := obfuscation.WrapConn(tlsConn) // transport.Layer with 4-byte length framing
+```
+
+### Per-stream Traffic Counters
+
+`StreamState` now exposes atomic counters for per-stream byte tracking:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `BytesIn` | `atomic.Int64` | Bytes written to target (client → target direction) |
+| `BytesOut` | `atomic.Int64` | Bytes sent to client (target → client direction) |
+
+These complement the server-wide `GlobalStats` counters and allow per-connection
+observability without locks.
+
+---
+
 
 | Version | Oturum | Changes |
 |---------|--------|---------|
 | 1.0     | 1.16   | Initial specification: frame format, handshake, encryption, RTT, reliability, rate limiting |
 | 1.1     | 1.20   | Added §11 Transport Abstraction (Layer interface, optional capabilities, Faz 2 extension points) |
 | 1.2     | 1.22   | Added §12 TCP Transport & HTTPConnect Obfuscation; `TCPServer` relay; `NewRelayHandlerWithFactory` |
+| 1.3     | 1.23   | Added §13 TLS Wrapping (`BuildTLSConfig`, self-signed cert); per-stream `BytesIn`/`BytesOut` in `StreamState`; `WrapConn`/`NewRawTCPLayer` helpers |

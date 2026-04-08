@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"testing"
 	"time"
@@ -216,5 +217,147 @@ func TestHTTPConnectViaTCPRelaySOCKS5(t *testing.T) {
 	conn.Close()
 	cancel()
 	time.Sleep(200 * time.Millisecond)
+	echoStop()
+}
+
+// startTLSTCPRelayServer starts a TCPServer with TLS (self-signed cert) on a
+// free port. Returns the address and a *tls.Config with InsecureSkipVerify so
+// test clients can connect without trusting the self-signed cert.
+func startTLSTCPRelayServer(t *testing.T) (addr string, clientTLSCfg *tls.Config) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("get free TCP port: %v", err)
+	}
+	addr = ln.Addr().String()
+	_ = ln.Close()
+
+	srv, err := relay.NewTCPServer(addr, nil)
+	if err != nil {
+		t.Fatalf("NewTCPServer: %v", err)
+	}
+	srv.AllowPrivateTargets = true
+	srv.AcceptHTTPConnect = false
+
+	tlsCfg, err := relay.BuildTLSConfig("", "") // self-signed
+	if err != nil {
+		t.Fatalf("BuildTLSConfig: %v", err)
+	}
+	srv.TLSConfig = tlsCfg
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Log("warning: tls tcp relay did not stop within cleanup timeout")
+		}
+	})
+
+	// Client TLS config: skip verification for self-signed cert in tests.
+	clientTLSCfg = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13} //nolint:gosec
+	return addr, clientTLSCfg
+}
+
+// TestTLSTCPRelayDirectEcho verifies that a client can connect to the TCPServer
+// over TLS and relay DATA frames through to an echo server.
+//
+// Flow: tls.Dial → (TLS) → TCPServer → echo server → TCPServer → tls.Conn.Read
+func TestTLSTCPRelayDirectEcho(t *testing.T) {
+	echoAddr, echoStop := startTCPEchoServer(t)
+	relayAddr, clientTLSCfg := startTLSTCPRelayServer(t)
+
+	// Connect to the TLS relay server.
+	tlsConn, err := tls.Dial("tcp", relayAddr, clientTLSCfg)
+	if err != nil {
+		echoStop()
+		t.Fatalf("tls.Dial: %v", err)
+	}
+
+	// Wrap in a minimal Layer so we can send/receive length-prefixed frames.
+	// Use relay's readFrame/writeFrame logic by constructing a rawTCPLayer.
+	h := obfuscation.NewRawTCPLayer(tlsConn)
+
+	// CONNECT to echo server.
+	connectFrame := transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagConnect,
+		StreamID: 1,
+		Seq:      0,
+		Payload:  []byte(echoAddr),
+	}
+	if err := h.SendFrame(connectFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(CONNECT): %v", err)
+	}
+
+	h.SetReadTimeout(3 * time.Second)
+	ack, err := h.ReceiveFrame()
+	if err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("ReceiveFrame(ACK): %v", err)
+	}
+	if ack.Flags&transport.FlagACK == 0 {
+		h.Close()
+		echoStop()
+		t.Fatalf("expected ACK, got flags=%02x", ack.Flags)
+	}
+
+	// Send DATA and verify echo round-trip.
+	payload := []byte("tls relay echo test")
+	dataFrame := transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagData,
+		StreamID: 1,
+		Seq:      1,
+		Payload:  payload,
+	}
+	if err := h.SendFrame(dataFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(DATA): %v", err)
+	}
+
+	var gotACK, gotData bool
+	var echoPayload []byte
+	for i := 0; i < 3 && !(gotACK && gotData); i++ {
+		h.SetReadTimeout(3 * time.Second)
+		f, err := h.ReceiveFrame()
+		if err != nil {
+			break
+		}
+		if f.Flags&transport.FlagACK != 0 {
+			gotACK = true
+		}
+		if f.Flags&transport.FlagData != 0 {
+			gotData = true
+			echoPayload = f.Payload
+		}
+	}
+	if !gotACK {
+		h.Close()
+		echoStop()
+		t.Fatalf("did not receive DATA ACK")
+	}
+	if !gotData {
+		h.Close()
+		echoStop()
+		t.Fatalf("did not receive echoed DATA")
+	}
+	if string(echoPayload) != string(payload) {
+		h.Close()
+		echoStop()
+		t.Fatalf("echo mismatch: got %q, want %q", echoPayload, payload)
+	}
+
+	h.Close()
+	time.Sleep(100 * time.Millisecond)
 	echoStop()
 }

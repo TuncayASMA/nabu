@@ -65,6 +65,26 @@ func NewHTTPConnect(relayAddr, proxyAddr string) (*HTTPConnect, error) {
 	}, nil
 }
 
+// WrapConn wraps an already-connected net.Conn into an HTTPConnect layer.
+// No TCP dial or HTTP CONNECT handshake is performed — the caller is
+// responsible for having established and negotiated the connection.
+// This is useful when the outer transport (e.g. TLS) is handled externally.
+func WrapConn(c net.Conn) *HTTPConnect {
+	return &HTTPConnect{
+		ReadTimeout:  DefaultTCPReadTimeout,
+		WriteTimeout: DefaultTCPWriteTimeout,
+		conn:         c,
+		reader:       bufio.NewReader(c),
+	}
+}
+
+// NewRawTCPLayer wraps an already-open net.Conn as a transport.Layer that
+// uses the same 4-byte length-prefix framing as HTTPConnect but skips the
+// HTTP CONNECT handshake.  Primarily used in tests to speak NABU framing
+// directly over an existing connection (e.g. a TLS connection dialled by
+// the test itself).
+func NewRawTCPLayer(c net.Conn) *HTTPConnect { return WrapConn(c) }
+
 // SetReadTimeout implements transport.ReadTimeoutSetter.
 func (h *HTTPConnect) SetReadTimeout(d time.Duration) { h.ReadTimeout = d }
 

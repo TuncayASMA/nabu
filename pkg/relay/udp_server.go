@@ -31,6 +31,9 @@ type StreamState struct {
 	reorderBuf      map[uint32][]byte // out-of-order frames waiting for delivery
 	maxBufFrames    int               // backpressure: max frames in reorder buffer
 	mu              sync.Mutex
+	// Per-stream traffic counters (atomic).
+	BytesIn  atomic.Int64 // bytes received from client → written to target
+	BytesOut atomic.Int64 // bytes received from target → sent to client
 }
 
 type UDPServer struct {
