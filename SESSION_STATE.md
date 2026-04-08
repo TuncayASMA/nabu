@@ -2,21 +2,21 @@
 # Bu dosyayı her oturum başında oku, her oturum sonunda güncelle.
 
 ## Son Güncelleme
-Tarih: 2026-04-07
-Oturum: 1.9 (Tamamlandı)
+Tarih: 2026-04-08
+Oturum: 1.10 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.9 — Reliability katmanı tamamlandı (reorder buf + backpressure + exponential backoff)
+- Oturum: 1.10 — PSK-based AES-256-GCM wire encryption tamamlandı
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/crypto: Handshake protokolü — istemci/relay ephemeral key exchange (X25519 veya ECDH)
-2. pkg/crypto: session key türetme handshake akışına bağla (HKDF zaten var)
-3. pkg/transport: Frame'lere şifreleme katmanı ekle (Encrypt/Decrypt her frame)
-4. cmd/nabu-client + cmd/nabu-relay: --psk veya --key-file parametresi
-5. Şifreli end-to-end tüneli integration testiyle doğrula
+1. X25519 ephemeral key exchange (forward secrecy) — PSK yerine geçici key pair
+2. pkg/relay: per-source rate limiting (token bucket, UDP kaynak IP başına)
+3. pkg/transport: congestion-aware backoff (RTT ölçümü ile adaptive retry)
+4. Relay'e kimlik doğrulama reject mekanizması — PSK yoksa/yanlışsa DROP (şu an sessiz geçiyor)
+5. deploy/: Docker Compose ve OCI ARM deployment rehberi
 ```
 
 ## Tamamlananlar
@@ -70,10 +70,19 @@ Oturum: 1.9 (Tamamlandı)
 - [x] test/integration: reliability_test.go — TestDuplicateDataFrameIsIgnored PASS
 - [x] test/integration: TestOutOfOrderDataFrameDeliveredInOrder PASS
 - [x] git commit f9c13ff + push → main
+- [x] pkg/transport: FlagHandshake=0x40, Frame struct, var bloğu düzeltildi
+- [x] pkg/transport/udp_client.go: SessionKey []byte, SendFrame encrypt, ReceiveFrame decrypt
+- [x] pkg/relay/udp_server.go: PSK field, sessions sync.Map, handleHandshakeFrame (HKDF),
+      sendHandshakeACK (plaintext), sendFrame AES-GCM encrypt, main loop decrypt
+- [x] pkg/tunnel/relay_handler.go: performHandshake() (32-byte salt + HKDF), NewRelayHandler(addr, psk)
+- [x] cmd/nabu-client + cmd/nabu-relay: --psk flag eklendi
+- [x] test/integration/encryption_test.go: TestEncryptedTunnelEcho PASS, TestEncryptedTunnelMultiPayload PASS
+- [x] Tüm testler geçti (go test ./...)
+- [x] git commit 87ff7a8 + push → main
 
 ## Yarım Kalanlar
-- Şifreleme katmanı henüz transport'a entegre değil (crypto paketi hazır, wire'a bağlanmadı)
-- Handshake (key exchange) protokolü henüz yok
+- X25519 ephemeral key exchange (forward secrecy) henüz yok
+- PSK yoksa/yanlışsa relay hâlâ frame'i işliyor (auth reject mekanizması eksik)
 - Rate limiting ve per-source quota henüz yok
 - Congestion-aware backoff (RTT ölçümü) henüz yok
 
