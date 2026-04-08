@@ -3,20 +3,20 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.10 (Tamamlandı)
+Oturum: 1.11 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.10 — PSK-based AES-256-GCM wire encryption tamamlandı
+- Oturum: 1.11 — X25519 ephemeral key exchange + PSK auth reject
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. X25519 ephemeral key exchange (forward secrecy) — PSK yerine geçici key pair
-2. pkg/relay: per-source rate limiting (token bucket, UDP kaynak IP başına)
-3. pkg/transport: congestion-aware backoff (RTT ölçümü ile adaptive retry)
-4. Relay'e kimlik doğrulama reject mekanizması — PSK yoksa/yanlışsa DROP (şu an sessiz geçiyor)
-5. deploy/: Docker Compose ve OCI ARM deployment rehberi
+1. pkg/relay: per-source rate limiting (token bucket, UDP kaynak IP başına, ~100 pkt/s)
+2. pkg/transport: RTT-aware congestion backoff (ping/pong frame veya frame timestamp)
+3. deploy/: Docker Compose (client+relay) + OCI ARM systemd deployment rehberi
+4. pkg/relay: bant genişliği istatistikleri (bytes_in/out per stream, prometheus gauge opsiyonel)
+5. docs/PROTOCOL.md: wire format, handshake akışı, şifreleme katmanı dokümantasyonu
 ```
 
 ## Tamamlananlar
@@ -78,13 +78,19 @@ Oturum: 1.10 (Tamamlandı)
 - [x] cmd/nabu-client + cmd/nabu-relay: --psk flag eklendi
 - [x] test/integration/encryption_test.go: TestEncryptedTunnelEcho PASS, TestEncryptedTunnelMultiPayload PASS
 - [x] Tüm testler geçti (go test ./...)
-- [x] git commit 87ff7a8 + push → main
+- [x] pkg/crypto/x25519.go: GenerateX25519KeyPair, X25519SharedSecret, DeriveSessionKeyX25519
+- [x] pkg/crypto/x25519_test.go: symmetry, determinism, both-sides-agree, forward-secrecy unit testleri
+- [x] pkg/relay/udp_server.go: handleHandshakeFrame → X25519 DH, sendHandshakeACK relay pubkey taşıyor
+- [x] pkg/relay/udp_server.go: PSK auth reject — session key olmadan gelen frame'ler DROP
+- [x] pkg/tunnel/relay_handler.go: performHandshake → X25519 DH
+- [x] test/integration/encryption_test.go: TestNoPSKClientRejectedByPSKRelay PASS
+- [x] git commit 24005d7 + push → main
 
 ## Yarım Kalanlar
-- X25519 ephemeral key exchange (forward secrecy) henüz yok
-- PSK yoksa/yanlışsa relay hâlâ frame'i işliyor (auth reject mekanizması eksik)
 - Rate limiting ve per-source quota henüz yok
-- Congestion-aware backoff (RTT ölçümü) henüz yok
+- RTT-aware congestion backoff henüz yok
+- Deployment dökümantasyonu henüz yok
+- Protocol wire format dokümantasyonu (PROTOCOL.md) yok
 
 ## Reliability Notu (1.9)
 - Stop-and-wait ACK: tamamlandı
