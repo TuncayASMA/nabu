@@ -12,7 +12,9 @@ import (
 
 	"github.com/TuncayASMA/nabu/pkg/config"
 	"github.com/TuncayASMA/nabu/pkg/logger"
+	"github.com/TuncayASMA/nabu/pkg/obfuscation"
 	"github.com/TuncayASMA/nabu/pkg/socks5"
+	"github.com/TuncayASMA/nabu/pkg/transport"
 	"github.com/TuncayASMA/nabu/pkg/tunnel"
 	"github.com/TuncayASMA/nabu/pkg/version"
 )
@@ -26,6 +28,8 @@ func main() {
 	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
+	obfsMode := flag.String("obfuscation", obfuscation.ModeNone, "Obfuscation modu: none | http-connect")
+	obfsProxy := flag.String("obfs-proxy", "", "HTTP CONNECT proxy adresi (host:port) — sadece http-connect modunda kullanılır")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
@@ -95,7 +99,21 @@ func main() {
 
 	server := socks5.NewServer(cfg.Socks5.Listen)
 	server.Logger = log
-	server.OnConnect = tunnel.NewRelayHandler(relayAddr, []byte(*psk))
+
+	// Obfuscation factory: nil layer → UDP fallback inside NewRelayHandler.
+	obfsLayer, err := obfuscation.NewLayer(*obfsMode, relayAddr, *obfsProxy)
+	if err != nil {
+		log.Error("obfuscation katmanı başlatılamadı", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
+	var layer transport.Layer
+	if obfsLayer != nil {
+		layer = obfsLayer
+		log.Info("obfuscation etkin", slog.String("mode", *obfsMode))
+	}
+
+	server.OnConnect = tunnel.NewRelayHandlerWithLayer(relayAddr, []byte(*psk), layer)
 
 	log.Info("SOCKS5 server dinliyor", slog.String("addr", cfg.Socks5.Listen))
 

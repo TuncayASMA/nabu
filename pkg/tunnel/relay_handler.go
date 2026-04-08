@@ -27,18 +27,33 @@ const (
 var nextStreamID uint32
 
 func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
+	return NewRelayHandlerWithLayer(relayAddr, psk, nil)
+}
+
+// NewRelayHandlerWithLayer is like NewRelayHandler but accepts a pre-built
+// transport.Layer. When layer is nil (or the layer does not implement a
+// Connect method), the handler falls back to a fresh UDP connection per
+// SOCKS5 request. When layer is non-nil it is used as-is for every request
+// (it must already be connected).
+func NewRelayHandlerWithLayer(relayAddr string, psk []byte, layer transport.Layer) socks5.ConnHandler {
 	return func(conn net.Conn, req socks5.Request) error {
-		udpClient, err := transport.NewUDPClient(relayAddr)
-		if err != nil {
-			return fmt.Errorf("create udp client failed: %w", err)
-		}
-		defer udpClient.Close()
+		var l transport.Layer
+		if layer != nil {
+			l = layer
+		} else {
+			udpClient, err := transport.NewUDPClient(relayAddr)
+			if err != nil {
+				return fmt.Errorf("create udp client failed: %w", err)
+			}
+			defer udpClient.Close()
 
-		if err := udpClient.Connect(); err != nil {
-			return fmt.Errorf("connect udp client failed: %w", err)
+			if err := udpClient.Connect(); err != nil {
+				return fmt.Errorf("connect udp client failed: %w", err)
+			}
+			l = udpClient
 		}
 
-		return runTunnel(conn, req, udpClient, psk)
+		return runTunnel(conn, req, l, psk)
 	}
 }
 

@@ -36,3 +36,10 @@ type RTTMeasurer interface {
 type ReadTimeoutSetter interface {
 	SetReadTimeout(d time.Duration)
 }
+
+// SessionKeySetter is an optional capability for layers that support applying
+// a post-handshake AES-256-GCM session key to subsequent frames.
+// UDPClient and HTTPConnect both implement this interface.
+type SessionKeySetter interface {
+	SetSessionKey(key []byte)
+}
