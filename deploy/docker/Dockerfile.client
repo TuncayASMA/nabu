@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+# ----- build stage -----
+FROM golang:1.22-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOARCH=arm64 GOOS=linux \
+    go build -trimpath -ldflags="-s -w" \
+    -o /out/nabu-client ./cmd/nabu-client
+
+# ----- runtime stage -----
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /out/nabu-client /nabu-client
+EXPOSE 1080/tcp
+ENTRYPOINT ["/nabu-client"]

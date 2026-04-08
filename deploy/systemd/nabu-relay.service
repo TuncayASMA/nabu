@@ -1,0 +1,51 @@
+# /etc/systemd/system/nabu-relay.service
+# OCI ARM64 (Ubuntu 22.04 / 24.04) deployment unit for the Nabu relay.
+#
+# Install:
+#   sudo cp nabu-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nabu-relay
+#
+# Configuration is loaded from /etc/nabu/relay.env (see relay.env.example).
+
+[Unit]
+Description=Nabu UDP Relay
+Documentation=https://github.com/TuncayASMA/nabu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nabu
+Group=nabu
+
+# Load secrets from a dedicated env file (not world-readable).
+EnvironmentFile=/etc/nabu/relay.env
+
+# Assumes binary is installed to /usr/local/bin/nabu-relay
+ExecStart=/usr/local/bin/nabu-relay \
+    --listen=${NABU_RELAY_LISTEN:-:7000} \
+    --psk=${NABU_PSK} \
+    --rate-limit=${NABU_RATE_LIMIT:-100}
+
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/nabu
+
+# Allow unprivileged UDP socket binding (ports ≥ 1024).
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nabu-relay
+
+[Install]
+WantedBy=multi-user.target

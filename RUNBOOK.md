@@ -1004,7 +1004,121 @@ go install github.com/cilium/ebpf/cmd/bpf2go@latest
 
 ---
 
-## 🚀 BUGÜN BAŞLAMA
+## � DEPLOYMENT — Docker Compose (Sunucu + İstemci)
+
+### Ön Gereksinim
+
+```bash
+# PSK oluştur (hem relay hem client'ta aynı değer olmalı)
+openssl rand -hex 32
+```
+
+### Relay Sunucusu (OCI ARM64)
+
+```bash
+cd /home/ubuntu/nabu/deploy/docker
+
+# .env oluştur
+cp .env.example .env
+nano .env          # NABU_PSK'yı doldur
+
+# Sadece relay ayağa kaldır
+docker compose up -d nabu-relay
+
+# Log takip
+docker compose logs -f nabu-relay
+```
+
+Güvenlik Duvarı:
+
+```bash
+# OCI Security List veya iptables — UDP portu aç
+sudo iptables -A INPUT -p udp --dport 7000 -j ACCEPT
+```
+
+### İstemci (dizüstü / yerel cihaz)
+
+```bash
+cd /path/to/nabu/deploy/docker
+
+# .env oluştur
+cp .env.example .env
+# NABU_PSK = relay ile aynı değer
+# NABU_RELAY_ADDR = relay'in dış IP'si:7000
+nano .env
+
+docker compose up -d nabu-client
+
+# SOCKS5 proxy → localhost:1080
+curl --proxy socks5h://127.0.0.1:1080 https://ifconfig.me
+```
+
+---
+
+## ⚙️ DEPLOYMENT — Systemd (OCI ARM64 doğrudan kurulum)
+
+### Binary Kurulum
+
+```bash
+# Relay sunucusunda
+cd /home/ubuntu/nabu
+go build -trimpath -ldflags="-s -w" -o /usr/local/bin/nabu-relay ./cmd/nabu-relay
+go build -trimpath -ldflags="-s -w" -o /usr/local/bin/nabu-client ./cmd/nabu-client
+
+# Servis kullanıcısı oluştur
+sudo useradd -r -s /sbin/nologin nabu
+sudo mkdir -p /var/log/nabu && sudo chown nabu:nabu /var/log/nabu
+```
+
+### Relay Servis Kurulum
+
+```bash
+sudo mkdir -p /etc/nabu
+
+# Env dosyasını kopyala ve düzenle
+sudo cp deploy/systemd/relay.env.example /etc/nabu/relay.env
+sudo chmod 600 /etc/nabu/relay.env && sudo chown nabu:nabu /etc/nabu/relay.env
+sudo nano /etc/nabu/relay.env    # NABU_PSK doldur
+
+# Systemd unit
+sudo cp deploy/systemd/nabu-relay.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nabu-relay
+
+# Durum kontrol
+sudo systemctl status nabu-relay
+sudo journalctl -u nabu-relay -f
+```
+
+### İstemci Servis Kurulum
+
+```bash
+sudo cp deploy/systemd/client.env.example /etc/nabu/client.env
+sudo chmod 600 /etc/nabu/client.env && sudo chown nabu:nabu /etc/nabu/client.env
+sudo nano /etc/nabu/client.env    # NABU_PSK ve NABU_RELAY_ADDR doldur
+
+sudo cp deploy/systemd/nabu-client.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nabu-client
+
+sudo systemctl status nabu-client
+sudo journalctl -u nabu-client -f
+```
+
+### Hızlı Doğrulama
+
+```bash
+# SOCKS5 aracılığıyla dış IP kontrol
+curl --proxy socks5h://127.0.0.1:1080 https://ifconfig.me
+
+# Gecikme ölçümü (relay RTT loglarında görünür)
+curl -w "connect:%{time_connect}s total:%{time_total}s\n" \
+     --proxy socks5h://127.0.0.1:1080 https://1.1.1.1
+```
+
+---
+
+## �🚀 BUGÜN BAŞLAMA
 
 Şu an Faz 1, Sprint 1, Oturum 1.1:
 
