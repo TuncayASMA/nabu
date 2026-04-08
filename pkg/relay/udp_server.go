@@ -39,12 +39,17 @@ type UDPServer struct {
 	AllowPrivateTargets bool
 	// PSK enables AES-256-GCM frame encryption. When non-empty, each connecting
 	// client must perform a FlagHandshake exchange before sending data.
-	PSK  []byte
-	conn net.PacketConn
+	PSK []byte
+	// RateLimitPPS is the per-source IP:port rate limit in packets per second.
+	// Burst is set to 2×RateLimitPPS. Zero disables rate limiting.
+	RateLimitPPS int
+	conn         net.PacketConn
 	// streams: key=streamStateKey(streamID, remoteAddr), value=*StreamState
 	streams sync.Map
 	// sessions: key=remoteAddr.String(), value=[]byte (session key per client IP:port)
 	sessions sync.Map
+	// rateLimiters: key=remoteAddr.String(), value=*RateLimiterMap (created lazily)
+	rateLimiters *RateLimiterMap
 }
 
 func NewUDPServer(listenAddr string, logger *slog.Logger) (*UDPServer, error) {
@@ -416,10 +421,13 @@ func (s *UDPServer) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Initialise rate limiter map if configured.
+	if s.RateLimitPPS > 0 {
+		s.rateLimiters = NewRateLimiterMap(s.RateLimitPPS, s.RateLimitPPS*2)
+	}
+
 	buf := make([]byte, transport.HeaderSize+transport.MaxPayload)
 	for {
-		// TODO: Add per-source and global rate limiting before production rollout.
-		// This skeleton currently accepts unlimited datagrams for development speed.
 		if dl, ok := s.conn.(interface{ SetReadDeadline(time.Time) error }); ok {
 			_ = dl.SetReadDeadline(time.Now().Add(2 * time.Second))
 		}
@@ -435,6 +443,12 @@ func (s *UDPServer) Start(ctx context.Context) error {
 				}
 			}
 			return fmt.Errorf("udp read failed: %w", err)
+		}
+
+		// Per-source rate limiting: drop frames from misbehaving clients.
+		if s.rateLimiters != nil && !s.rateLimiters.Allow(addr.String()) {
+			s.Logger.Warn("rate limit exceeded, frame dropped", "remote", addr.String())
+			continue
 		}
 
 		frame, err := transport.DecodeFrame(buf[:n])

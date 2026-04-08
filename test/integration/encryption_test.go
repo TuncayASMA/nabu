@@ -9,6 +9,7 @@ import (
 
 	"github.com/TuncayASMA/nabu/pkg/relay"
 	"github.com/TuncayASMA/nabu/pkg/socks5"
+	"github.com/TuncayASMA/nabu/pkg/transport"
 	"github.com/TuncayASMA/nabu/pkg/tunnel"
 )
 
@@ -249,4 +250,73 @@ func TestNoPSKClientRejectedByPSKRelay(t *testing.T) {
 	case <-time.After(6 * time.Second):
 		t.Fatal("expected socks handler to fail when PSK is missing, but it hung")
 	}
+}
+
+// TestRateLimitDropsExcessFrames verifies that the relay's per-source rate
+// limiter rejects packets once the bucket is exhausted.
+// We dial the relay's UDP port directly to send a burst of handshake frames
+// and count how many ACKs come back.
+func TestRateLimitDropsExcessFrames(t *testing.T) {
+	relayAddr := getFreeUDPAddr(t)
+
+	relayServer, err := relay.NewUDPServer(relayAddr, nil)
+	if err != nil {
+		t.Fatalf("new udp server: %v", err)
+	}
+	relayServer.AllowPrivateTargets = true
+	// rate=2 pps, burst=4 (2×) — deliberately tiny for a fast, deterministic test.
+	relayServer.RateLimitPPS = 2
+
+	relayCtx, relayCancel := context.WithCancel(context.Background())
+	defer relayCancel()
+	go relayServer.Start(relayCtx) //nolint:errcheck
+	time.Sleep(120 * time.Millisecond)
+
+	conn, err := net.Dial("udp", relayAddr)
+	if err != nil {
+		t.Fatalf("dial relay: %v", err)
+	}
+	defer conn.Close()
+
+	// Build a minimal FlagHandshake frame (no PSK — no pubkey payload needed).
+	makeHandshakeFrame := func(streamID uint16, seq uint32) []byte {
+		f := transport.Frame{
+			Version:  transport.FrameVersion,
+			Flags:    transport.FlagHandshake,
+			StreamID: streamID,
+			Seq:      seq,
+		}
+		raw, _ := transport.EncodeFrame(f)
+		return raw
+	}
+
+	// Send 20 frames in a tight burst — well above burst=4.
+	const total = 20
+	for i := 0; i < total; i++ {
+		conn.Write(makeHandshakeFrame(uint16(i), uint32(i))) //nolint:errcheck
+	}
+
+	// Collect returned ACKs within a short window.
+	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)) //nolint:errcheck
+	acks := 0
+	buf := make([]byte, 1500)
+	for {
+		n, readErr := conn.Read(buf)
+		if readErr != nil {
+			break
+		}
+		f, decErr := transport.DecodeFrame(buf[:n])
+		if decErr == nil && f.Flags&transport.FlagHandshake != 0 && f.Flags&transport.FlagACK != 0 {
+			acks++
+		}
+	}
+
+	// With burst=4 (2×RateLimitPPS) we expect ≤ 4 ACKs out of 20 sent.
+	if acks > 4 {
+		t.Errorf("expected ≤4 ACKs (burst=4) got %d — rate limiter not working", acks)
+	}
+	if acks == 0 {
+		t.Error("expected ≥1 ACK got 0 — rate limiter too aggressive or relay not started")
+	}
+	t.Logf("rate limit test: sent=%d acks=%d (burst cap=4)", total, acks)
 }
