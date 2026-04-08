@@ -704,3 +704,51 @@ observability without locks.
 | 1.2     | 1.22   | Added §12 TCP Transport & HTTPConnect Obfuscation; `TCPServer` relay; `NewRelayHandlerWithFactory` |
 | 1.3     | 1.23   | Added §13 TLS Wrapping (`BuildTLSConfig`, self-signed cert); per-stream `BytesIn`/`BytesOut` in `StreamState`; `WrapConn`/`NewRawTCPLayer` helpers |
 | 1.4     | 1.24   | Added §14 Anti-replay Window (`ReplayWindow` 64-frame sliding window); integrated into `TCPServer` + `UDPServer`; `HTTPConnect.RelayTLSConfig` client-side TLS dialer; `--obfs-tls`/`--obfs-tls-insecure` flags in `nabu-client` |
+| 1.5     | 1.25   | Added §15 WebSocket Obfuscation (`WebSocketLayer`, RFC 6455 binary-frame tunnelling); `TCPServer.AcceptWebSocket`; `ModeWebSocket` factory; `--serve-ws`/`--ws-addr`/`--ws-tls`/`--ws-cert`/`--ws-key` flags in `nabu-relay`; WSS (WebSocket over TLS) support |
+
+---
+
+## §15 WebSocket Obfuscation
+
+`WebSocketLayer` tunnels NABU frames inside RFC 6455 WebSocket binary frames,
+making relay traffic indistinguishable from WebSocket application traffic.
+
+### Wire Format
+
+```
+TCP stream → WS upgrade (HTTP 101) → WS binary frames
+  Each WS frame payload = [4-byte BE length][NABU frame bytes]
+```
+
+The inner `[4-byte length][frame]` structure is identical to raw TCP transport
+(§12), so all existing relay code works without changes when `AcceptWebSocket=true`.
+
+### Client handshake
+
+`WebSocketLayer.Connect()` performs:
+1. TCP dial to `RelayAddr`
+2. Optional TLS upgrade when `TLSConfig != nil` (WSS)
+3. RFC 6455 HTTP Upgrade (`GET / HTTP/1.1`, `Upgrade: websocket`, random base64 key)
+4. Validates `101 Switching Protocols` + `Sec-WebSocket-Accept`
+5. Wraps conn with `wsConn` (transparent frame encode/decode)
+
+### Server acceptance
+
+Set `TCPServer.AcceptWebSocket = true`.  On each accepted connection the server:
+1. Reads the `GET` upgrade request
+2. Validates `Upgrade: websocket` + `Sec-WebSocket-Key`
+3. Sends `HTTP/1.1 101 Switching Protocols` with `Sec-WebSocket-Accept`
+4. Wraps conn with `wsConn` (server side, no masking required)
+
+### Masking
+
+Per RFC 6455 §5.1 client-to-server frames **must** be masked with a
+cryptographically random 4-byte key.  Server-to-client frames are unmasked.
+`wsConn` enforces this automatically based on the `isClient` flag.
+
+### WSS (WebSocket Secure)
+
+Set `WebSocketLayer.TLSConfig` to enable TLS before the WebSocket handshake.
+On the relay side start a TLS listener and set `AcceptWebSocket = true`.
+Use `--ws-tls --ws-cert path.pem --ws-key path.key` on `nabu-relay`; omitting
+`--ws-cert`/`--ws-key` generates a self-signed certificate at startup.

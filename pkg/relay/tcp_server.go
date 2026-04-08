@@ -17,6 +17,7 @@ import (
 	"time"
 
 	nabuCrypto "github.com/TuncayASMA/nabu/pkg/crypto"
+	"github.com/TuncayASMA/nabu/pkg/obfuscation"
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
 
@@ -41,6 +42,12 @@ type TCPServer struct {
 	// AcceptHTTPConnect, when true, performs an HTTP/1.1 CONNECT handshake on
 	// each incoming connection before starting the NABU frame exchange.
 	AcceptHTTPConnect bool
+	// AcceptWebSocket, when true, performs an RFC 6455 WebSocket Upgrade
+	// handshake on each incoming connection.  Frames are then exchanged as
+	// WebSocket binary frames (each frame carries one length-prefixed NABU
+	// frame), making the traffic appear as ordinary WebSocket traffic.
+	// Mutually exclusive with AcceptHTTPConnect.
+	AcceptWebSocket bool
 	// TLSConfig, when non-nil, wraps every accepted connection with TLS.
 	// A passive DPI observer sees only TLS ClientHello (indistinguishable from HTTPS).
 	TLSConfig *tls.Config
@@ -115,6 +122,13 @@ func (s *TCPServer) handleConn(ctx context.Context, conn net.Conn) {
 			s.Logger.Warn("HTTP CONNECT accept failed", "remote", remote.String(), "error", err)
 			return
 		}
+	} else if s.AcceptWebSocket {
+		if err := obfuscation.WSServerHandshake(conn); err != nil {
+			s.Logger.Warn("WebSocket handshake failed", "remote", remote.String(), "error", err)
+			return
+		}
+		// Wrap conn with transparent WS framing; all subsequent I/O uses WS binary frames.
+		conn = obfuscation.WrapWebSocket(conn, false /*server: no masking*/)
 	}
 
 	reader := bufio.NewReaderSize(conn, 65536)

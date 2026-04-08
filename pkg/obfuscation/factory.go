@@ -12,6 +12,9 @@ const ModeNone = "none"
 // ModeHTTPConnect tunnels NABU frames through an HTTP CONNECT proxy.
 const ModeHTTPConnect = "http-connect"
 
+// ModeWebSocket tunnels NABU frames as WebSocket binary frames (RFC 6455).
+const ModeWebSocket = "websocket"
+
 // NewLayer creates a transport.Layer for the requested obfuscation mode.
 //
 //   - "none"         → nil, nil  (caller should fall back to UDP)
@@ -32,7 +35,16 @@ func NewLayer(mode, relayAddr, proxyAddr string) (transport.Layer, error) {
 			return nil, fmt.Errorf("http-connect dial: %w", err)
 		}
 		return h, nil
+	case ModeWebSocket:
+		w, err := NewWebSocketLayer(relayAddr)
+		if err != nil {
+			return nil, fmt.Errorf("websocket init: %w", err)
+		}
+		if err := w.Connect(); err != nil {
+			return nil, fmt.Errorf("websocket dial: %w", err)
+		}
+		return w, nil
 	default:
-		return nil, fmt.Errorf("unknown obfuscation mode %q (valid: none, http-connect)", mode)
+		return nil, fmt.Errorf("unknown obfuscation mode %q (valid: none, http-connect, websocket)", mode)
 	}
 }

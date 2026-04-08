@@ -31,6 +31,11 @@ func main() {
 	tcpTLS := flag.Bool("tcp-tls", false, "TCP relay'i TLS ile sar (HTTPS görünümü)")
 	tcpCert := flag.String("tcp-cert", "", "TLS sertifika dosyası (PEM); bosssa self-signed otomatik üretilir")
 	tcpKey := flag.String("tcp-key", "", "TLS anahtar dosyası (PEM); bosssa self-signed otomatik üretilir")
+	serveWS := flag.Bool("serve-ws", false, "WebSocket relay listener baslat (RFC 6455 binary frame obfuscation)")
+	wsAddr := flag.String("ws-addr", ":8080", "WebSocket relay dinleme adresi (serve-ws=true ise kullanılır)")
+	wsTLS := flag.Bool("ws-tls", false, "WebSocket relay'i TLS ile sar (WSS görünümü)")
+	wsCert := flag.String("ws-cert", "", "WSS TLS sertifika dosyası (PEM); bosssa self-signed")
+	wsKey := flag.String("ws-key", "", "WSS TLS anahtar dosyası (PEM); bosssa self-signed")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
@@ -154,6 +159,36 @@ func main() {
 		go func() {
 			if err := tcpServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("tcp relay hatasi", slog.Any("err", err))
+			}
+		}()
+	}
+
+	// WebSocket relay (RFC 6455 binary frame obfuscation).
+	if *serveWS {
+		wsServer, err := relay.NewTCPServer(*wsAddr, log)
+		if err != nil {
+			log.Error("ws relay olusturulamadi", slog.Any("err", err))
+			os.Exit(1)
+		}
+		if *psk != "" {
+			wsServer.PSK = []byte(*psk)
+		}
+		wsServer.AcceptWebSocket = true
+		if *wsTLS {
+			tlsCfg, err := relay.BuildTLSConfig(*wsCert, *wsKey)
+			if err != nil {
+				log.Error("WSS TLS konfigürasyonu olusturulamadi", slog.Any("err", err))
+				os.Exit(1)
+			}
+			wsServer.TLSConfig = tlsCfg
+		}
+		log.Info("WebSocket relay başlıyor",
+			slog.String("addr", *wsAddr),
+			slog.Bool("tls", *wsTLS),
+		)
+		go func() {
+			if err := wsServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("ws relay hatasi", slog.Any("err", err))
 			}
 		}()
 	}
