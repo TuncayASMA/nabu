@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/TuncayASMA/nabu/pkg/config"
+	"github.com/TuncayASMA/nabu/pkg/logger"
 	"github.com/TuncayASMA/nabu/pkg/socks5"
 	"github.com/TuncayASMA/nabu/pkg/tunnel"
 	"github.com/TuncayASMA/nabu/pkg/version"
@@ -21,6 +26,7 @@ func main() {
 	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
+	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -33,8 +39,10 @@ func main() {
 		os.Exit(0)
 	}
 
+	log := logger.NewWithLevel(*logLevel)
+
 	if err := config.ValidateConfigMode(*mode); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Error("geçersiz config modu", slog.String("error", err.Error()))
 		os.Exit(2)
 	}
 
@@ -45,7 +53,7 @@ func main() {
 		if err == nil {
 			cfg = loadedCfg
 		} else if !errors.Is(err, os.ErrNotExist) || *mode == config.ConfigModeFileOnly {
-			fmt.Fprintf(os.Stderr, "client config yuklenemedi (%s): %v\n", *configPath, err)
+			log.Error("client config yüklenemedi", slog.String("path", *configPath), slog.String("error", err.Error()))
 			os.Exit(2)
 		}
 	}
@@ -64,31 +72,39 @@ func main() {
 
 	cfg.Mode.ConfigMode = *mode
 	if err := config.ValidateClientConfig(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "client config invalid: %v\n", err)
+		log.Error("client config geçersiz", slog.String("error", err.Error()))
 		os.Exit(2)
 	}
 
-	fmt.Printf(
-		"nabu-client basliyor... relay=%s:%d socks=%s config=%s mode=%s\n",
-		cfg.Relay.Host,
-		cfg.Relay.Port,
-		cfg.Socks5.Listen,
-		*configPath,
-		cfg.Mode.ConfigMode,
+	relayAddr := fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port)
+	log.Info("nabu-client başlıyor",
+		slog.String("relay", relayAddr),
+		slog.String("socks", cfg.Socks5.Listen),
+		slog.String("config", *configPath),
+		slog.String("mode", cfg.Mode.ConfigMode),
+		slog.String("version", version.Version),
 	)
 
 	if !*serveSocks {
 		return
 	}
 
+	// Graceful shutdown: cancel context on SIGINT / SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	server := socks5.NewServer(cfg.Socks5.Listen)
-	server.OnConnect = tunnel.NewRelayHandler(
-		fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port),
-		[]byte(*psk),
-	)
-	fmt.Printf("socks5 server dinliyor: %s\n", cfg.Socks5.Listen)
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "socks5 server hatasi: %v\n", err)
-		os.Exit(1)
+	server.Logger = log
+	server.OnConnect = tunnel.NewRelayHandler(relayAddr, []byte(*psk))
+
+	log.Info("SOCKS5 server dinliyor", slog.String("addr", cfg.Socks5.Listen))
+
+	if err := server.ListenAndServeContext(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Info("nabu-client düzgünce kapatıldı")
+		} else {
+			log.Error("SOCKS5 server hatası", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
 	}
 }
