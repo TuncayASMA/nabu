@@ -3,19 +3,21 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-08
-Oturum: 1.14 (Tamamlandı)
+Oturum: 1.18 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 1 — Temel UDP Tünel
 - Sprint: 1 — Proje Bootstrap
-- Oturum: 1.14 — Deploy (Docker Compose + OCI ARM64 systemd)
+- Oturum: 1.18 → Sonraki: 1.19 (Faz 1 Mimari İnceleme)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-1. pkg/relay: bant genişliği istatistikleri (bytes_in/out per stream, Prometheus gauge opsiyonel)
-2. docs/PROTOCOL.md: wire format, handshake akışı, şifreleme katmanı dokümantasyonu
-3. test/integration: end-to-end RTT ölçümünü içeren entegrasyon testi (TestRTTAdaptiveBackoff)
-4. pkg/relay: graceful shutdown (context cancel → tüm stream'ler FIN gönder)
+1. Oturum 1.19 — Faz 1 Architecture Review:
+   - goroutine leak check (goleak entegrasyonu)
+   - interface design review (pkg/relay, pkg/tunnel, pkg/transport)
+   - error handling consistency check
+   - Faz 2 hazırlık değerlendirmesi
+2. Faz 2 hazırlığı: obfuscation layer planlaması
 ```
 
 ## Tamamlananlar
@@ -104,12 +106,27 @@ Oturum: 1.14 (Tamamlandı)
 - [x] deploy/systemd/relay.env.example + client.env.example
 - [x] RUNBOOK.md: Docker Compose + systemd deployment bölümü eklendi
 - [x] git commit 582bf35 (Oturum 1.14)
+- [x] pkg/relay/udp_server.go: Stats (BytesIn/BytesOut/ActiveStreams/DroppedFrames) + graceful shutdown FIN broadcast
+- [x] pkg/relay/udp_server_test.go: TestUDPServerStats PASS
+- [x] git commit 060bd78 (Oturum 1.15)
+- [x] test/integration/rtt_test.go: TestMeasureRTTOnLiveRelay + TestRTTAdaptiveBackoffEndToEnd + TestRTTMultipleRoundTrips PASS
+- [x] docs/PROTOCOL.md: wire format, handshake akışı, şifreleme katmanı dokümantasyonu
+- [x] git commit 33ecc77 (Oturum 1.16)
+- [x] pkg/logger/logger.go: JSON slog handler + sensitive field redaction
+- [x] cmd/nabu-relay/main.go: --log-level flag, structured slog, relay.NewUDPServer(cfg.Listen, log)
+- [x] git commit d83e167 (Oturum 1.17)
+- [x] .github/workflows/ci.yml: Go 1.26.x, lint-first, -race, integration tests, coverage ≥60%, multi-arch build
+- [x] .golangci.yml: errcheck, gosimple, govet, ineffassign, staticcheck, unused, gofmt, goimports, misspell, gosec
+- [x] pkg/tunnel/relay_handler.go: data race fix — remove deferred ReadTimeout reset
+- [x] test/integration/helpers_test.go: startConfiguredRelay() + t.Cleanup cancel+wait pattern
+- [x] Tüm integration testler startConfiguredRelay'e taşındı (relay goroutine port reuse race fix)
+- [x] go test -race geçiyor: 3/3 ardışık geçiş (7 paket, 0 FAIL)
+- [x] git commit d3a0df8 (Oturum 1.18)
 
 ## Yarım Kalanlar
-- Bant genişliği istatistikleri (bytes_in/out per stream) henüz yok
-- PROTOCOL.md wire format dokümantasyonu yok
-- RTT backoff entegrasyon testi yok
-- Graceful shutdown eksik
+- Bant genişliği istatistikleri (bytes_in/out per stream) → Stats struct var ama Prometheus/HTTP endpoint yok
+- Faz 2 obfuscation layer henüz başlamadı
+- Faz 1 architecture review (goroutine leak check, interface review) — Oturum 1.19
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
