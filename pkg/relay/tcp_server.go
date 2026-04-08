@@ -119,6 +119,8 @@ func (s *TCPServer) handleConn(ctx context.Context, conn net.Conn) {
 
 	reader := bufio.NewReaderSize(conn, 65536)
 	var sessionKey []byte
+	// Per-connection sliding-window replay detector.
+	replay := NewReplayWindow()
 
 	for {
 		if ctx.Err() != nil {
@@ -141,6 +143,24 @@ func (s *TCPServer) handleConn(ctx context.Context, conn net.Conn) {
 				return
 			}
 			frame.Payload = dec
+		}
+
+		// Anti-replay: drop duplicate / out-of-window frames.
+		// Handshake frames are exempt — they carry a fresh ephemeral key exchange
+		// and must always be processed to allow session re-negotiation.
+		if frame.Flags&transport.FlagHandshake == 0 {
+			if !replay.Check(frame.Seq) {
+				s.Logger.Warn("frame dropped: replay detected",
+					"remote", remote.String(),
+					"stream", frame.StreamID,
+					"seq", frame.Seq,
+				)
+				continue
+			}
+		} else {
+			// Reset the window when a new handshake starts so that seq numbers
+			// can restart from 0 on session re-use.
+			replay.Reset()
 		}
 
 		s.Stats.FramesIn.Add(1)

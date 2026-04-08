@@ -16,6 +16,7 @@ package obfuscation
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -35,6 +36,11 @@ const (
 
 // HTTPConnect implements transport.Layer by tunnelling NABU frames over a TCP
 // connection opened via an HTTP/1.1 CONNECT request.
+//
+// When RelayTLSConfig is non-nil, the underlying TCP dial is upgraded to TLS
+// (i.e. a tls.Conn is established before any HTTP CONNECT handshake).  From
+// the wire's perspective the connection is indistinguishable from standard
+// HTTPS/TLS traffic.
 type HTTPConnect struct {
 	RelayAddr    string
 	ProxyAddr    string
@@ -42,6 +48,9 @@ type HTTPConnect struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	SessionKey   []byte
+	// RelayTLSConfig, when non-nil, wraps the TCP connection with TLS before
+	// sending any NABU frame.  Set InsecureSkipVerify for self-signed relay certs.
+	RelayTLSConfig *tls.Config
 
 	conn   net.Conn
 	reader *bufio.Reader
@@ -91,18 +100,40 @@ func (h *HTTPConnect) SetReadTimeout(d time.Duration) { h.ReadTimeout = d }
 // SetSessionKey implements transport.SessionKeySetter.
 func (h *HTTPConnect) SetSessionKey(key []byte) { h.SessionKey = key }
 
-// Connect dials the underlying TCP connection and (when ProxyAddr is set)
-// issues an HTTP/1.1 CONNECT handshake.
+// Connect dials the underlying TCP connection, optionally upgrades it to TLS
+// (when RelayTLSConfig is set), and then (when ProxyAddr is set) issues an
+// HTTP/1.1 CONNECT handshake.
 func (h *HTTPConnect) Connect() error {
 	dialTarget := h.RelayAddr
 	if h.ProxyAddr != "" {
 		dialTarget = h.ProxyAddr
 	}
 	dialer := &net.Dialer{Timeout: h.DialTimeout}
-	conn, err := dialer.Dial("tcp", dialTarget)
+	tcpConn, err := dialer.Dial("tcp", dialTarget)
 	if err != nil {
 		return fmt.Errorf("tcp dial %s failed: %w", dialTarget, err)
 	}
+
+	var conn net.Conn = tcpConn
+	if h.RelayTLSConfig != nil {
+		// Determine the Server Name for TLS SNI from RelayAddr (not ProxyAddr).
+		host, _, err := net.SplitHostPort(h.RelayAddr)
+		if err != nil {
+			_ = tcpConn.Close()
+			return fmt.Errorf("parse relay addr for TLS SNI: %w", err)
+		}
+		tlsCfg := h.RelayTLSConfig.Clone()
+		if tlsCfg.ServerName == "" {
+			tlsCfg.ServerName = host
+		}
+		tlsConn := tls.Client(tcpConn, tlsCfg)
+		if err := tlsConn.Handshake(); err != nil {
+			_ = tcpConn.Close()
+			return fmt.Errorf("tls handshake failed: %w", err)
+		}
+		conn = tlsConn
+	}
+
 	if h.ProxyAddr != "" {
 		if err := h.httpConnectHandshake(conn); err != nil {
 			_ = conn.Close()

@@ -53,6 +53,8 @@ type UDPServer struct {
 	streams sync.Map
 	// sessions: key=remoteAddr.String(), value=[]byte (session key per client IP:port)
 	sessions sync.Map
+	// replayWindows: key=remoteAddr.String(), value=*ReplayWindow (per-client anti-replay)
+	replayWindows sync.Map
 	// rateLimiters: key=remoteAddr.String(), value=*RateLimiterMap (created lazily)
 	rateLimiters *RateLimiterMap
 }
@@ -163,6 +165,25 @@ func (s *UDPServer) setSessionKey(addr net.Addr, key []byte) {
 
 func (s *UDPServer) removeSessionKey(addr net.Addr) {
 	s.sessions.Delete(addr.String())
+}
+
+// --- replay window helpers ---
+
+// getOrCreateReplayWindow returns the per-client anti-replay window.
+func (s *UDPServer) getOrCreateReplayWindow(addr net.Addr) *ReplayWindow {
+	k := addr.String()
+	if val, ok := s.replayWindows.Load(k); ok {
+		return val.(*ReplayWindow)
+	}
+	w := NewReplayWindow()
+	actual, _ := s.replayWindows.LoadOrStore(k, w)
+	return actual.(*ReplayWindow)
+}
+
+// resetReplayWindow discards and replaces the replay window for a client;
+// called on new handshakes so seq numbers can restart from 0.
+func (s *UDPServer) resetReplayWindow(addr net.Addr) {
+	s.replayWindows.Store(addr.String(), NewReplayWindow())
 }
 
 // handleHandshakeFrame performs the relay side of the X25519 key exchange.
@@ -499,6 +520,23 @@ func (s *UDPServer) Start(ctx context.Context) error {
 		// Track inbound traffic stats.
 		s.Stats.FramesIn.Add(1)
 		s.Stats.BytesIn.Add(int64(len(frame.Payload)))
+
+		// Anti-replay: drop duplicate / out-of-window frames.
+		// Handshake frames are exempt (they carry a fresh ephemeral key exchange).
+		// On a new handshake we reset the client's window so seq can restart.
+		if frame.Flags&transport.FlagHandshake == 0 {
+			rw := s.getOrCreateReplayWindow(addr)
+			if !rw.Check(frame.Seq) {
+				s.Logger.Warn("frame dropped: replay detected",
+					"remote", addr.String(),
+					"stream", frame.StreamID,
+					"seq", frame.Seq,
+				)
+				continue
+			}
+		} else {
+			s.resetReplayWindow(addr)
+		}
 
 		// Track stream state on incoming frame.
 		key := streamStateKey(frame.StreamID, addr)

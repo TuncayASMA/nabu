@@ -361,3 +361,172 @@ func TestTLSTCPRelayDirectEcho(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	echoStop()
 }
+
+// TestTCPRelayReplayDrop verifies that the TCPServer's anti-replay window
+// silently drops frames carrying a previously-seen sequence number.
+func TestTCPRelayReplayDrop(t *testing.T) {
+	echoAddr, echoStop := startTCPEchoServer(t)
+	relayAddr := startTCPRelayServer(t, false)
+
+	h, err := obfuscation.NewHTTPConnect(relayAddr, "")
+	if err != nil {
+		echoStop()
+		t.Fatalf("NewHTTPConnect: %v", err)
+	}
+	if err := h.Connect(); err != nil {
+		echoStop()
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Establish stream via CONNECT (seq=0).
+	connectFrame := transport.Frame{
+		Version: transport.FrameVersion, Flags: transport.FlagConnect,
+		StreamID: 7, Seq: 0, Payload: []byte(echoAddr),
+	}
+	if err := h.SendFrame(connectFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(CONNECT): %v", err)
+	}
+	h.SetReadTimeout(3 * time.Second)
+	ack, err := h.ReceiveFrame()
+	if err != nil || ack.Flags&transport.FlagACK == 0 {
+		h.Close()
+		echoStop()
+		t.Fatalf("expected CONNECT ACK, err=%v flags=%02x", err, ack.Flags)
+	}
+
+	// Send DATA seq=1 (first time — must be accepted and echoed).
+	dataFrame := transport.Frame{
+		Version: transport.FrameVersion, Flags: transport.FlagData,
+		StreamID: 7, Seq: 1, Payload: []byte("replay-test-payload"),
+	}
+	if err := h.SendFrame(dataFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(DATA seq=1): %v", err)
+	}
+
+	var gotFirstEcho bool
+	for i := 0; i < 3; i++ {
+		h.SetReadTimeout(2 * time.Second)
+		f, err := h.ReceiveFrame()
+		if err != nil {
+			break
+		}
+		if f.Flags&transport.FlagData != 0 {
+			gotFirstEcho = true
+			break
+		}
+	}
+	if !gotFirstEcho {
+		h.Close()
+		echoStop()
+		t.Fatal("expected first DATA echo but got none")
+	}
+
+	// Replay DATA seq=1 — must be silently dropped by the relay's anti-replay window.
+	if err := h.SendFrame(dataFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(replay seq=1): %v", err)
+	}
+
+	// Wait briefly; no second DATA echo must arrive (allow up to 500 ms).
+	var gotSpuriousEcho bool
+	for i := 0; i < 2; i++ {
+		h.SetReadTimeout(250 * time.Millisecond)
+		f, err := h.ReceiveFrame()
+		if err != nil {
+			break
+		}
+		if f.Flags&transport.FlagData != 0 {
+			gotSpuriousEcho = true
+			break
+		}
+	}
+	if gotSpuriousEcho {
+		h.Close()
+		echoStop()
+		t.Fatal("anti-replay FAILED: relay forwarded a replayed frame")
+	}
+
+	h.Close()
+	time.Sleep(100 * time.Millisecond)
+	echoStop()
+}
+
+// TestHTTPConnectClientTLSDial verifies that an HTTPConnect layer with
+// RelayTLSConfig set can dial a TLS-enabled TCPServer and round-trip DATA.
+func TestHTTPConnectClientTLSDial(t *testing.T) {
+	echoAddr, echoStop := startTCPEchoServer(t)
+	relayAddr, clientTLSCfg := startTLSTCPRelayServer(t)
+
+	h, err := obfuscation.NewHTTPConnect(relayAddr, "")
+	if err != nil {
+		echoStop()
+		t.Fatalf("NewHTTPConnect: %v", err)
+	}
+	h.RelayTLSConfig = clientTLSCfg
+
+	if err := h.Connect(); err != nil {
+		echoStop()
+		t.Fatalf("Connect (TLS): %v", err)
+	}
+
+	connectFrame := transport.Frame{
+		Version: transport.FrameVersion, Flags: transport.FlagConnect,
+		StreamID: 3, Seq: 0, Payload: []byte(echoAddr),
+	}
+	if err := h.SendFrame(connectFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(CONNECT): %v", err)
+	}
+	h.SetReadTimeout(3 * time.Second)
+	ack, err := h.ReceiveFrame()
+	if err != nil || ack.Flags&transport.FlagACK == 0 {
+		h.Close()
+		echoStop()
+		t.Fatalf("expected CONNECT ACK, err=%v flags=%02x", err, ack.Flags)
+	}
+
+	want := []byte("client-tls-dial echo")
+	dataFrame := transport.Frame{
+		Version: transport.FrameVersion, Flags: transport.FlagData,
+		StreamID: 3, Seq: 1, Payload: want,
+	}
+	if err := h.SendFrame(dataFrame); err != nil {
+		h.Close()
+		echoStop()
+		t.Fatalf("SendFrame(DATA): %v", err)
+	}
+
+	var gotData bool
+	var gotPayload []byte
+	for i := 0; i < 3 && !gotData; i++ {
+		h.SetReadTimeout(3 * time.Second)
+		f, err := h.ReceiveFrame()
+		if err != nil {
+			break
+		}
+		if f.Flags&transport.FlagData != 0 {
+			gotData = true
+			gotPayload = f.Payload
+		}
+	}
+	if !gotData {
+		h.Close()
+		echoStop()
+		t.Fatal("did not receive echoed DATA frame")
+	}
+	if string(gotPayload) != string(want) {
+		h.Close()
+		echoStop()
+		t.Fatalf("echo mismatch: got %q, want %q", gotPayload, want)
+	}
+
+	h.Close()
+	time.Sleep(100 * time.Millisecond)
+	echoStop()
+}

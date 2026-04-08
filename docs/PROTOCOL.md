@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 1.3 (Faz 2 — TLS Wrapping + Per-stream Stats)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS operational  
+**Version:** 1.4 (Faz 2 — Anti-replay Window + Client TLS Dialer)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -21,8 +21,9 @@
 11. [Transport Abstraction (Layer Interface)](#transport-abstraction-faz-2-prep)
 12. [TCP Transport & HTTPConnect Obfuscation](#tcp-transport--httpconnect-obfuscation)
 13. [TLS Wrapping (Faz 2 — DPI Evasion)](#tls-wrapping-faz-2--dpi-evasion)
-14. [Security Considerations](#security-considerations)
-15. [Changelog](#changelog)
+14. [Anti-replay Window](#anti-replay-window)
+15. [Security Considerations](#security-considerations)
+16. [Changelog](#changelog)
 
 ---
 
@@ -285,20 +286,114 @@ The relay implements **token bucket** rate limiting per `(IP, port)` source.
 
 ---
 
+## Anti-replay Window
+
+### Motivation
+
+AES-256-GCM's nonce uniqueness provides implicit replay protection within a
+single session: a replayed ciphertext is rejected with a tag mismatch.  However
+this defence is insufficient in two scenarios:
+
+1. **Unencrypted mode** — when no PSK is configured, frames carry no GCM tag.
+2. **Session-level replay** — an attacker captures a full encrypted session and
+   replays it using a re-obtained session key (e.g. after PSK rotation).
+
+A dedicated sequence-number sliding window closes both gaps by tracking which
+`Seq` values have already been processed and rejecting duplicates regardless of
+encryption state.
+
+### Algorithm
+
+The relay maintains one **64-frame sliding window** per logical client
+connection (TCP connection for TCPServer; source IP:port for UDPServer).
+
+```
+  high water mark
+       │
+       ▼
+  front = highest accepted Seq + 1
+
+  bitmap (64 bits)
+  ┌────────────────────────────────────────────────────────────────┐
+  │ bit 0 = (front-1)  bit 1 = (front-2)  …  bit 63 = (front-64) │
+  └────────────────────────────────────────────────────────────────┘
+       1 = already seen         0 = not yet seen
+```
+
+**Acceptance rules** (evaluated atomically under a mutex):
+
+| Condition              | Action                                   |
+|------------------------|------------------------------------------|
+| `seq >= front`         | Accept; advance window; set bitmap bit   |
+| `front-64 ≤ seq < front` | Accept only if bitmap bit is 0; set bit |
+| `seq < front-64`       | Reject — too old (outside window)        |
+| bitmap bit already set | Reject — replay detected                 |
+
+**Window advance** — when a new `seq >= front` arrives, the bitmap is
+left-shifted by `seq - front + 1` positions before setting bit 0. Shifts ≥ 64
+reset the bitmap entirely (large-jump monotonic advance).
+
+### Scope
+
+| Component      | Granularity                   | Window lifecycle            |
+|----------------|-------------------------------|-----------------------------|
+| `TCPServer`    | Per TCP connection            | Lives for the duration of `handleConn`; discarded on disconnect |
+| `UDPServer`    | Per source `IP:port`          | Stored in `replayWindows sync.Map`; reset on new handshake |
+
+### Handshake Exemption
+
+Frames with `FlagHandshake` are **exempt** from replay checking.  Handshake
+frames carry ephemeral X25519 public keys; they are idempotent by design and
+must succeed even after a client restart that resets its seq counter to 0.  A
+new handshake also triggers a `Reset()` of the corresponding replay window so
+that the fresh session can start numbering from 0.
+
+### Implementation
+
+```go
+// pkg/relay/replay_window.go
+
+type ReplayWindow struct {
+    mu     sync.Mutex
+    front  uint32   // highest accepted seq + 1
+    bitmap uint64   // bit i = (front-1-i) seen
+    ready  bool     // false until first Check call
+}
+
+func NewReplayWindow() *ReplayWindow
+func (w *ReplayWindow) Check(seq uint32) bool  // true=accept, false=drop
+func (w *ReplayWindow) Reset()                 // reset on new handshake
+```
+
+### Drop Behaviour
+
+Replayed frames are **silently dropped** with a `WARN` log entry:
+
+```
+level=WARN msg="frame dropped: replay detected" remote=<addr> stream=<id> seq=<n>
+```
+
+No response is sent to the peer; this prevents oracle attacks that could be
+used to probe which sequence ranges are cached in the relay's window.
+
+---
+
 ## Security Considerations
 
 | Threat                     | Mitigation                                              |
 |----------------------------|---------------------------------------------------------|
 | Passive traffic analysis   | AES-256-GCM encryption + ephemeral X25519 keys          |
-| Replay attacks             | GCM tags are unique per nonce; random 12-byte nonce      |
+| Replay attacks             | GCM nonce uniqueness **+ 64-frame seq sliding window** per connection |
 | PSK brute-force            | Relay drops frames without a matching session silently   |
 | SSRF / open-relay abuse    | Private/loopback destinations blocked by default        |
 | DoS via packet flood       | Per-source token-bucket rate limiter                    |
 | Forward secrecy            | Ephemeral X25519 keys — new key pair per connection      |
 | Metadata leakage in errors | Error replies never sent; silent drop policy            |
 
-> **Known limitation (Faz 1):** No anti-replay window beyond GCM nonce
-> uniqueness.  A dedicated sequence-number replay window is planned for Faz 2.
+> ~~**Known limitation (Faz 1):** No anti-replay window beyond GCM nonce
+> uniqueness.  A dedicated sequence-number replay window is planned for Faz 2.~~
+> **Resolved in Faz 2 (Oturum 1.24):** 64-frame sliding window implemented in
+> `pkg/relay/replay_window.go`; integrated into TCPServer and UDPServer.
 
 ---
 
@@ -608,3 +703,4 @@ observability without locks.
 | 1.1     | 1.20   | Added §11 Transport Abstraction (Layer interface, optional capabilities, Faz 2 extension points) |
 | 1.2     | 1.22   | Added §12 TCP Transport & HTTPConnect Obfuscation; `TCPServer` relay; `NewRelayHandlerWithFactory` |
 | 1.3     | 1.23   | Added §13 TLS Wrapping (`BuildTLSConfig`, self-signed cert); per-stream `BytesIn`/`BytesOut` in `StreamState`; `WrapConn`/`NewRawTCPLayer` helpers |
+| 1.4     | 1.24   | Added §14 Anti-replay Window (`ReplayWindow` 64-frame sliding window); integrated into `TCPServer` + `UDPServer`; `HTTPConnect.RelayTLSConfig` client-side TLS dialer; `--obfs-tls`/`--obfs-tls-insecure` flags in `nabu-client` |

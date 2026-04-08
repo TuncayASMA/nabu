@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,6 +31,8 @@ func main() {
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	obfsMode := flag.String("obfuscation", obfuscation.ModeNone, "Obfuscation modu: none | http-connect")
 	obfsProxy := flag.String("obfs-proxy", "", "HTTP CONNECT proxy adresi (host:port) — sadece http-connect modunda kullanılır")
+	obfsTLS := flag.Bool("obfs-tls", false, "Relay bağlantısını TLS ile şifrele (DPI kaçınma için; http-connect modunda etkin)")
+	obfsTLSInsecure := flag.Bool("obfs-tls-insecure", false, "Relay TLS sertifikasını doğrulama (self-signed sertifikalar için)")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
@@ -105,6 +108,21 @@ func main() {
 	if err != nil {
 		log.Error("obfuscation katmanı başlatılamadı", slog.String("error", err.Error()))
 		os.Exit(1)
+	}
+
+	// When --obfs-tls is set, attach a TLS config to the obfuscation layer so
+	// the client-to-relay TCP connection is wrapped in TLS.
+	if *obfsTLS && obfsLayer != nil {
+		if hc, ok := obfsLayer.(*obfuscation.HTTPConnect); ok {
+			tlsCfg := &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				InsecureSkipVerify: *obfsTLSInsecure, //nolint:gosec // opt-in flag
+			}
+			hc.RelayTLSConfig = tlsCfg
+			log.Info("relay TLS etkin", slog.Bool("insecure", *obfsTLSInsecure))
+		} else {
+			log.Warn("--obfs-tls yalnızca http-connect modunda desteklenir; göz ardı ediliyor")
+		}
 	}
 
 	var layer transport.Layer
