@@ -71,7 +71,7 @@ func TestSocks5RelayForwardingEcho(t *testing.T) {
 
 	server := socks5.NewServer(":0")
 	server.RequestTimeout = time.Second
-	server.OnConnect = tunnel.NewRelayHandler(relayAddr)
+	server.OnConnect = tunnel.NewRelayHandler(relayAddr, nil)
 
 	client, serverConn := net.Pipe()
 	defer client.Close()

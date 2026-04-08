@@ -9,10 +9,11 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	nabuCrypto "github.com/TuncayASMA/nabu/pkg/crypto"
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
 
@@ -33,11 +34,17 @@ type StreamState struct {
 }
 
 type UDPServer struct {
-	ListenAddr string
-	Logger     *slog.Logger
+	ListenAddr          string
+	Logger              *slog.Logger
 	AllowPrivateTargets bool
-	conn       net.PacketConn
-	streams    sync.Map // key: streamStateKey(streamID, remoteAddr), value: *StreamState
+	// PSK enables AES-256-GCM frame encryption. When non-empty, each connecting
+	// client must perform a FlagHandshake exchange before sending data.
+	PSK  []byte
+	conn net.PacketConn
+	// streams: key=streamStateKey(streamID, remoteAddr), value=*StreamState
+	streams sync.Map
+	// sessions: key=remoteAddr.String(), value=[]byte (session key per client IP:port)
+	sessions sync.Map
 }
 
 func NewUDPServer(listenAddr string, logger *slog.Logger) (*UDPServer, error) {
@@ -109,9 +116,81 @@ func (s *UDPServer) closeStream(key string, state *StreamState) {
 		_ = targetConn.Close()
 	}
 	s.streams.Delete(key)
+	// Remove session key when last stream for this addr closes.
+	// (Simple heuristic: remove if no other streams remain for this remote addr.)
+	s.removeSessionKey(state.RemoteAddr)
+}
+
+// --- session key helpers ---
+
+func (s *UDPServer) getSessionKey(addr net.Addr) []byte {
+	if val, ok := s.sessions.Load(addr.String()); ok {
+		return val.([]byte)
+	}
+	return nil
+}
+
+func (s *UDPServer) setSessionKey(addr net.Addr, key []byte) {
+	s.sessions.Store(addr.String(), key)
+}
+
+func (s *UDPServer) removeSessionKey(addr net.Addr) {
+	s.sessions.Delete(addr.String())
+}
+
+// handleHandshakeFrame derives the session key from the PSK + client salt
+// and stores it keyed by remoteAddr. Returns the ACK to send back.
+func (s *UDPServer) handleHandshakeFrame(frame transport.Frame, addr net.Addr) error {
+	if len(s.PSK) == 0 {
+		// No PSK configured — ignore handshake (relay runs unencrypted).
+		return s.sendFrame(transport.Frame{
+			Version:  transport.FrameVersion,
+			Flags:    transport.FlagHandshake | transport.FlagACK,
+			StreamID: frame.StreamID,
+			Ack:      frame.Seq,
+		}, addr)
+	}
+	if len(frame.Payload) == 0 {
+		return fmt.Errorf("handshake frame missing salt payload")
+	}
+	key, err := nabuCrypto.DeriveSessionKey(s.PSK, frame.Payload, nabuCrypto.AES256KeySize)
+	if err != nil {
+		return fmt.Errorf("session key derivation failed: %w", err)
+	}
+	s.setSessionKey(addr, key)
+	// ACK is sent before key is used for encryption (client sets key after ACK).
+	return s.sendHandshakeACK(frame.StreamID, frame.Seq, addr)
+}
+
+// sendHandshakeACK sends a plaintext (never encrypted) handshake ACK.
+func (s *UDPServer) sendHandshakeACK(streamID uint16, ackSeq uint32, addr net.Addr) error {
+	frame := transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagHandshake | transport.FlagACK,
+		StreamID: streamID,
+		Ack:      ackSeq,
+	}
+	raw, err := transport.EncodeFrame(frame)
+	if err != nil {
+		return fmt.Errorf("handshake ack encode failed: %w", err)
+	}
+	if _, err := s.conn.WriteTo(raw, addr); err != nil {
+		return fmt.Errorf("handshake ack write failed: %w", err)
+	}
+	return nil
 }
 
 func (s *UDPServer) sendFrame(frame transport.Frame, addr net.Addr) error {
+	// Encrypt payload for non-handshake frames when a session key exists.
+	if (frame.Flags&transport.FlagHandshake == 0) && len(frame.Payload) > 0 {
+		if key := s.getSessionKey(addr); len(key) == nabuCrypto.AES256KeySize {
+			enc, err := nabuCrypto.Encrypt(frame.Payload, key)
+			if err != nil {
+				return fmt.Errorf("frame encrypt failed: %w", err)
+			}
+			frame.Payload = enc
+		}
+	}
 	raw, err := transport.EncodeFrame(frame)
 	if err != nil {
 		return fmt.Errorf("frame encode failed: %w", err)
@@ -348,6 +427,18 @@ func (s *UDPServer) Start(ctx context.Context) error {
 			continue
 		}
 
+		// Decrypt payload for non-handshake frames when session key is set.
+		if (frame.Flags&transport.FlagHandshake == 0) && len(frame.Payload) > 0 {
+			if key := s.getSessionKey(addr); len(key) == nabuCrypto.AES256KeySize {
+				dec, err := nabuCrypto.Decrypt(frame.Payload, key)
+				if err != nil {
+					s.Logger.Warn("frame decrypt failed", "remote", addr.String(), "error", err)
+					continue
+				}
+				frame.Payload = dec
+			}
+		}
+
 		// Track stream state on incoming frame.
 		key := streamStateKey(frame.StreamID, addr)
 		state := s.getOrCreateStreamState(frame.StreamID, addr)
@@ -358,6 +449,10 @@ func (s *UDPServer) Start(ctx context.Context) error {
 		s.Logger.Info("frame received", "remote", addr.String(), "stream", frame.StreamID, "seq", frame.Seq, "payload_bytes", len(frame.Payload))
 
 		switch {
+		case frame.Flags&transport.FlagHandshake != 0:
+			if err := s.handleHandshakeFrame(frame, addr); err != nil {
+				s.Logger.Warn("handshake frame handling failed", "remote", addr.String(), "error", err)
+			}
 		case frame.Flags&transport.FlagACK != 0:
 			continue
 		case frame.Flags&transport.FlagConnect != 0:

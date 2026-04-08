@@ -20,6 +20,7 @@ func main() {
 	socksListen := flag.String("socks-listen", "127.0.0.1:1080", "SOCKS5 dinleme adresi")
 	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
+	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -81,7 +82,10 @@ func main() {
 	}
 
 	server := socks5.NewServer(cfg.Socks5.Listen)
-	server.OnConnect = tunnel.NewRelayHandler(fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port))
+	server.OnConnect = tunnel.NewRelayHandler(
+		fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port),
+		[]byte(*psk),
+	)
 	fmt.Printf("socks5 server dinliyor: %s\n", cfg.Socks5.Listen)
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "socks5 server hatasi: %v\n", err)

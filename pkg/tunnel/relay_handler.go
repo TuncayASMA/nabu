@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	nabuCrypto "github.com/TuncayASMA/nabu/pkg/crypto"
 	"github.com/TuncayASMA/nabu/pkg/socks5"
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
@@ -22,7 +24,7 @@ const (
 
 var nextStreamID uint32
 
-func NewRelayHandler(relayAddr string) socks5.ConnHandler {
+func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 	return func(conn net.Conn, req socks5.Request) error {
 		udpClient, err := transport.NewUDPClient(relayAddr)
 		if err != nil {
@@ -32,6 +34,13 @@ func NewRelayHandler(relayAddr string) socks5.ConnHandler {
 
 		if err := udpClient.Connect(); err != nil {
 			return fmt.Errorf("connect udp client failed: %w", err)
+		}
+
+		// PSK handshake: derive session key before sending any application frame.
+		if len(psk) > 0 {
+			if err := performHandshake(udpClient, psk); err != nil {
+				return fmt.Errorf("handshake failed: %w", err)
+			}
 		}
 
 		streamID := uint16(atomic.AddUint32(&nextStreamID, 1))
@@ -74,6 +83,46 @@ func NewRelayHandler(relayAddr string) socks5.ConnHandler {
 		}
 		return nil
 	}
+}
+
+// performHandshake sends a FlagHandshake frame with a random 32-byte salt,
+// waits for the relay's Handshake|ACK, then derives and sets the session key.
+func performHandshake(client *transport.UDPClient, psk []byte) error {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("salt generation failed: %w", err)
+	}
+
+	if err := client.SendFrame(transport.Frame{
+		Version:  transport.FrameVersion,
+		Flags:    transport.FlagHandshake,
+		StreamID: 0,
+		Seq:      1,
+		Payload:  salt,
+	}); err != nil {
+		return fmt.Errorf("send handshake frame failed: %w", err)
+	}
+
+	prev := client.ReadTimeout
+	client.ReadTimeout = defaultAckTimeout
+	defer func() { client.ReadTimeout = prev }()
+
+	for {
+		frame, err := client.ReceiveFrame()
+		if err != nil {
+			return fmt.Errorf("receive handshake ack failed: %w", err)
+		}
+		if frame.Flags&transport.FlagHandshake != 0 && frame.Flags&transport.FlagACK != 0 {
+			break
+		}
+	}
+
+	key, err := nabuCrypto.DeriveSessionKey(psk, salt, nabuCrypto.AES256KeySize)
+	if err != nil {
+		return fmt.Errorf("derive session key failed: %w", err)
+	}
+	client.SessionKey = key
+	return nil
 }
 
 func waitForAck(client *transport.UDPClient, streamID uint16, seq uint32) error {

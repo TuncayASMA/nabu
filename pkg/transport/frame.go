@@ -11,10 +11,11 @@ const (
 	HeaderSize   = 12
 	MaxPayload   = 64 * 1024
 
-	FlagData    = 0x01
-	FlagConnect = 0x02
-	FlagFIN     = 0x04
-	FlagACK     = 0x80
+        FlagData      = 0x01
+        FlagConnect   = 0x02
+        FlagFIN       = 0x04
+        FlagHandshake = 0x40 // PSK-based session key negotiation
+        FlagACK       = 0x80
 )
 
 var (
@@ -23,6 +24,7 @@ var (
 	ErrInvalidPayloadLen = errors.New("invalid payload length")
 )
 
+// Frame is the wire-level PDU used between client and relay.
 type Frame struct {
 	Version  byte
 	Flags    byte

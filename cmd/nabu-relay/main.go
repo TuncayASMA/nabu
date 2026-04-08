@@ -21,6 +21,7 @@ func main() {
 	configPath := flag.String("config", config.DefaultRelayConfigPath, "Relay config dosya yolu")
 	wgCompatible := flag.Bool("wg-compatible", true, "WireGuard istemcileriyle uyumlu UDP iletim davranisi")
 	serveUDP := flag.Bool("serve-udp", true, "UDP relay listener baslat")
+	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	flag.Parse()
 
 	setFlags := map[string]bool{}
@@ -76,6 +77,9 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "udp relay olusturulamadi: %v\n", err)
 		os.Exit(1)
+	}
+	if *psk != "" {
+		udpServer.PSK = []byte(*psk)
 	}
 
 	if err := udpServer.Start(ctx); err != nil {

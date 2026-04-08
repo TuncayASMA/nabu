@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	nabuCrypto "github.com/TuncayASMA/nabu/pkg/crypto"
 )
 
 const (
@@ -15,7 +17,10 @@ type UDPClient struct {
 	RelayAddr    string
 	WriteTimeout time.Duration
 	ReadTimeout  time.Duration
-	conn         *net.UDPConn
+	// SessionKey enables AES-256-GCM frame encryption when set (32 bytes).
+	// Populated after a successful PSK handshake.
+	SessionKey []byte
+	conn       *net.UDPConn
 }
 
 func NewUDPClient(relayAddr string) (*UDPClient, error) {
@@ -53,6 +58,14 @@ func (c *UDPClient) SendFrame(f Frame) error {
 	if c.conn == nil {
 		return fmt.Errorf("udp client not connected")
 	}
+	// Encrypt payload for non-handshake frames when session key is set.
+	if len(c.SessionKey) == nabuCrypto.AES256KeySize && len(f.Payload) > 0 && (f.Flags&FlagHandshake == 0) {
+		enc, err := nabuCrypto.Encrypt(f.Payload, c.SessionKey)
+		if err != nil {
+			return fmt.Errorf("frame encrypt failed: %w", err)
+		}
+		f.Payload = enc
+	}
 	raw, err := EncodeFrame(f)
 	if err != nil {
 		return err
@@ -80,5 +93,17 @@ func (c *UDPClient) ReceiveFrame() (Frame, error) {
 	if err != nil {
 		return Frame{}, fmt.Errorf("udp read failed: %w", err)
 	}
-	return DecodeFrame(buf[:n])
+	frame, err := DecodeFrame(buf[:n])
+	if err != nil {
+		return Frame{}, err
+	}
+	// Decrypt payload for non-handshake frames when session key is set.
+	if len(c.SessionKey) == nabuCrypto.AES256KeySize && len(frame.Payload) > 0 && (frame.Flags&FlagHandshake == 0) {
+		dec, err := nabuCrypto.Decrypt(frame.Payload, c.SessionKey)
+		if err != nil {
+			return Frame{}, fmt.Errorf("frame decrypt failed: %w", err)
+		}
+		frame.Payload = dec
+	}
+	return frame, nil
 }
