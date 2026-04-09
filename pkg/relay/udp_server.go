@@ -46,6 +46,10 @@ type UDPServer struct {
 	// RateLimitPPS is the per-source IP:port rate limit in packets per second.
 	// Burst is set to 2×RateLimitPPS. Zero disables rate limiting.
 	RateLimitPPS int
+	// SalamanderPSK, when non-nil, enables Salamander UDP obfuscation: every
+	// outgoing datagram is wrapped and every incoming datagram is unwrapped
+	// using the shared PSK.  Must match the client's SalamanderPSK.
+	SalamanderPSK []byte
 	// Stats exposes live server-wide traffic counters.
 	Stats GlobalStats
 	conn  net.PacketConn
@@ -238,6 +242,13 @@ func (s *UDPServer) sendHandshakeACK(streamID uint16, ackSeq uint32, payload []b
 	if err != nil {
 		return fmt.Errorf("handshake ack encode failed: %w", err)
 	}
+	// Salamander wraps even the handshake ACK so the obfuscation is symmetric.
+	if len(s.SalamanderPSK) > 0 {
+		raw, err = nabuCrypto.SalamanderEncode(s.SalamanderPSK, raw)
+		if err != nil {
+			return fmt.Errorf("salamander encode (ack): %w", err)
+		}
+	}
 	if _, err := s.conn.WriteTo(raw, addr); err != nil {
 		return fmt.Errorf("handshake ack write failed: %w", err)
 	}
@@ -262,6 +273,13 @@ func (s *UDPServer) sendFrame(frame transport.Frame, addr net.Addr) error {
 	raw, err := transport.EncodeFrame(frame)
 	if err != nil {
 		return fmt.Errorf("frame encode failed: %w", err)
+	}
+	// Wrap with Salamander outer layer when enabled.
+	if len(s.SalamanderPSK) > 0 {
+		raw, err = nabuCrypto.SalamanderEncode(s.SalamanderPSK, raw)
+		if err != nil {
+			return fmt.Errorf("salamander encode: %w", err)
+		}
 	}
 	if _, err := s.conn.WriteTo(raw, addr); err != nil {
 		return fmt.Errorf("frame write failed: %w", err)
@@ -492,6 +510,18 @@ func (s *UDPServer) Start(ctx context.Context) error {
 			return fmt.Errorf("udp read failed: %w", err)
 		}
 
+		// Unwrap Salamander outer layer before any other processing.
+		packet := buf[:n]
+		if len(s.SalamanderPSK) > 0 {
+			decoded, decErr := nabuCrypto.SalamanderDecode(s.SalamanderPSK, packet)
+			if decErr != nil {
+				s.Logger.Warn("salamander decode failed, frame dropped",
+					"remote", addr.String(), "error", decErr)
+				continue
+			}
+			packet = decoded
+		}
+
 		// Per-source rate limiting: drop frames from misbehaving clients.
 		if s.rateLimiters != nil && !s.rateLimiters.Allow(addr.String()) {
 			s.Stats.DropsRL.Add(1)
@@ -499,7 +529,7 @@ func (s *UDPServer) Start(ctx context.Context) error {
 			continue
 		}
 
-		frame, err := transport.DecodeFrame(buf[:n])
+		frame, err := transport.DecodeFrame(packet)
 		if err != nil {
 			s.Logger.Warn("invalid frame", "remote", addr.String(), "error", err)
 			continue

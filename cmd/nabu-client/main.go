@@ -35,6 +35,7 @@ func main() {
 	obfsTLSInsecure := flag.Bool("obfs-tls-insecure", false, "Relay TLS sertifikasını doğrulama (self-signed sertifikalar için)")
 	obfsUTLS := flag.Bool("obfs-utls", false, "TLS parmak izini tarayıcı ile örtüştür (uTLS; --obfs-tls veya --obfs-ws-tls ile birlikte kullanılır)")
 	obfsUTLSFingerprint := flag.String("obfs-utls-fingerprint", "chrome", "uTLS tarayıcı parmak izi: chrome | firefox | safari | edge | golang | random")
+	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'sı (relay ile aynı olmalı; sadece UDP modunda geçerli)")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
@@ -145,7 +146,18 @@ func main() {
 		log.Info("obfuscation etkin", slog.String("mode", *obfsMode))
 	}
 
-	server.OnConnect = tunnel.NewRelayHandlerWithLayer(relayAddr, []byte(*psk), layer)
+	// Salamander is a UDP-only obfuscation layer; incompatible with TCP-based
+	// obfuscation modes. When --salamander-psk is set without an obfuscation
+	// layer we use the dedicated Salamander handler.
+	if *salamanderPSK != "" && layer == nil {
+		log.Info("salamander UDP obfuscation etkin")
+		server.OnConnect = tunnel.NewRelayHandlerUDPSalamander(relayAddr, []byte(*psk), []byte(*salamanderPSK))
+	} else {
+		if *salamanderPSK != "" {
+			log.Warn("--salamander-psk TCP obfuscation modu ile kullanılamaz; salamander devre dışı")
+		}
+		server.OnConnect = tunnel.NewRelayHandlerWithLayer(relayAddr, []byte(*psk), layer)
+	}
 
 	log.Info("SOCKS5 server dinliyor", slog.String("addr", cfg.Socks5.Listen))
 

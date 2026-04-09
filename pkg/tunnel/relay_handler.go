@@ -57,6 +57,30 @@ func NewRelayHandlerWithLayer(relayAddr string, psk []byte, layer transport.Laye
 	}
 }
 
+// NewRelayHandlerUDPSalamander creates a handler that uses direct UDP
+// transport with Salamander obfuscation enabled. salamanderPSK must match the
+// relay's configured PSK; if empty, Salamander is disabled (same as
+// NewRelayHandler). This handler always uses the UDP path; it is incompatible
+// with TCP-based obfuscation layers.
+func NewRelayHandlerUDPSalamander(relayAddr string, psk []byte, salamanderPSK []byte) socks5.ConnHandler {
+	return func(conn net.Conn, req socks5.Request) error {
+		udpClient, err := transport.NewUDPClient(relayAddr)
+		if err != nil {
+			return fmt.Errorf("create udp client failed: %w", err)
+		}
+		defer udpClient.Close()
+
+		if len(salamanderPSK) > 0 {
+			udpClient.SalamanderPSK = salamanderPSK
+		}
+
+		if err := udpClient.Connect(); err != nil {
+			return fmt.Errorf("connect udp client failed: %w", err)
+		}
+		return runTunnel(conn, req, udpClient, psk)
+	}
+}
+
 // NewRelayHandlerWithFactory returns a ConnHandler that calls layerFactory on
 // every inbound SOCKS5 connection to obtain a fresh, already-connected
 // transport.Layer. This is the correct approach when the obfuscation layer is

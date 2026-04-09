@@ -705,6 +705,7 @@ observability without locks.
 | 1.3     | 1.23   | Added §13 TLS Wrapping (`BuildTLSConfig`, self-signed cert); per-stream `BytesIn`/`BytesOut` in `StreamState`; `WrapConn`/`NewRawTCPLayer` helpers |
 | 1.4     | 1.24   | Added §14 Anti-replay Window (`ReplayWindow` 64-frame sliding window); integrated into `TCPServer` + `UDPServer`; `HTTPConnect.RelayTLSConfig` client-side TLS dialer; `--obfs-tls`/`--obfs-tls-insecure` flags in `nabu-client` |
 | 1.5     | 1.25   | Added §15 WebSocket Obfuscation (`WebSocketLayer`, RFC 6455 binary-frame tunnelling); `TCPServer.AcceptWebSocket`; `ModeWebSocket` factory; `--serve-ws`/`--ws-addr`/`--ws-tls`/`--ws-cert`/`--ws-key` flags in `nabu-relay`; WSS (WebSocket over TLS) support |
+| 1.6     | 1.27   | Added §16 Salamander UDP Obfuscation (`SalamanderEncode`/`SalamanderDecode` in `pkg/crypto`); `UDPClient.SalamanderPSK`; `UDPServer.SalamanderPSK`; `NewRelayHandlerUDPSalamander`; `--salamander-psk` flags in `nabu-client` and `nabu-relay`; fixed `MeasureRTT` Salamander bypass |
 
 ---
 
@@ -752,3 +753,96 @@ Set `WebSocketLayer.TLSConfig` to enable TLS before the WebSocket handshake.
 On the relay side start a TLS listener and set `AcceptWebSocket = true`.
 Use `--ws-tls --ws-cert path.pem --ws-key path.key` on `nabu-relay`; omitting
 `--ws-cert`/`--ws-key` generates a self-signed certificate at startup.
+
+---
+
+## §16 Salamander UDP Obfuscation
+
+Salamander wraps every outgoing UDP datagram in a per-frame authenticated
+envelope so that each packet looks like uniformly random bytes to a passive
+observer.  There is no static header, no plaintext flags, no recognisable
+magic number — only the shared PSK allows the recipient to recover the inner
+NABU frame.
+
+### Motivation
+
+Without Salamander the NABU UDP transport has a fixed 12-byte header that DPI
+can fingerprint.  Salamander eliminates all observable structure at the UDP
+payload level.  Because the salt is refreshed for every frame the stream also
+resists statistical traffic analysis.
+
+### Wire Format
+
+```
++-------------------+--------------------+-------------------------------------+
+|  Salt (8 bytes)   |  GCM Nonce (12 B)  |  AES-256-GCM ciphertext + tag (N+16)|
++-------------------+--------------------+-------------------------------------+
+```
+
+- **Salt**: cryptographically random, freshly generated per frame.
+- **Nonce**: 12 bytes drawn from the output of HKDF (see below).
+- **Ciphertext**: AES-256-GCM encryption of the inner NABU frame, appended with
+  the standard 16-byte authentication tag.
+- **Total overhead**: 8 + 12 + 16 = **36 bytes** per datagram.
+
+### Key Derivation
+
+A per-frame AES-256 key is derived using HKDF-SHA256:
+
+```
+frame_key = HKDF-SHA256(
+    secret = PSK,
+    salt   = random_salt_8_bytes,
+    info   = "nabu-salamander-v1",
+    length = 32,
+)
+```
+
+The 12-byte GCM nonce is the first 12 bytes of a second HKDF expansion with
+`info = "nabu-salamander-v1-nonce"`.
+
+Fresh salt → fresh frame key → each datagram is cryptographically independent.
+
+### Security Properties
+
+| Property | Value |
+|---|---|
+| IND-CPA | ✔ (fresh key + nonce every frame) |
+| Authentication | ✔ (AES-256-GCM 128-bit tag) |
+| Replay protection | ✔ (inner NABU replay window still active) |
+| Traffic fingerprinting | ✘ (salt+ciphertext look uniformly random) |
+| Forward secrecy | ✘ (static PSK; ephemeral keys planned via ECDH) |
+
+### API
+
+```go
+// pkg/crypto/salamander.go
+const SalamanderOverhead = 36  // salt(8) + nonce(12) + GCM tag(16)
+
+func SalamanderEncode(psk, payload []byte) ([]byte, error)
+func SalamanderDecode(psk, packet []byte) ([]byte, error)
+```
+
+### Integration Points
+
+| Component | Field | Effect |
+|---|---|---|
+| `transport.UDPClient` | `SalamanderPSK []byte` | Encodes every `SendFrame`; decodes every `ReceiveFrame` and `MeasureRTT` |
+| `relay.UDPServer` | `SalamanderPSK []byte` | Decodes every incoming datagram in `ReadFrom`; encodes all outgoing frames via `sendFrame`/`sendHandshakeACK` |
+| `tunnel.NewRelayHandlerUDPSalamander` | `salamanderPSK []byte` | Creates a per-SOCKS5-session `UDPClient` with PSK set |
+
+### CLI Flags
+
+```
+nabu-client --salamander-psk <psk>   # UDP mode only; incompatible with --obfuscation
+nabu-relay  --salamander-psk <psk>   # applied to the UDP relay listener
+```
+
+### Scope
+
+Salamander is a **UDP-only** layer.  It wraps the outer datagram before it
+leaves the host NIC and after it arrives.  The inner NABU frame structure
+(version, flags, stream ID, seq, ack, payload) is unchanged.  AES-GCM session
+encryption (`--psk`) operates on the payload inside the NABU frame and is
+independent of Salamander — both can be active simultaneously for defence in
+depth.

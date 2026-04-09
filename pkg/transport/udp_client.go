@@ -20,7 +20,11 @@ type UDPClient struct {
 	// SessionKey enables AES-256-GCM frame encryption when set (32 bytes).
 	// Populated after a successful PSK handshake.
 	SessionKey []byte
-	conn       *net.UDPConn
+	// SalamanderPSK, when non-nil, wraps every outgoing UDP datagram in a
+	// Salamander envelope and decodes incoming datagrams before processing.
+	// Must match the relay's SalamanderPSK.
+	SalamanderPSK []byte
+	conn          *net.UDPConn
 }
 
 // Compile-time assertions: UDPClient must satisfy both Layer and RTTMeasurer.
@@ -81,6 +85,13 @@ func (c *UDPClient) SendFrame(f Frame) error {
 	if err != nil {
 		return err
 	}
+	// Wrap with Salamander outer obfuscation when enabled.
+	if len(c.SalamanderPSK) > 0 {
+		raw, err = nabuCrypto.SalamanderEncode(c.SalamanderPSK, raw)
+		if err != nil {
+			return fmt.Errorf("salamander encode: %w", err)
+		}
+	}
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout)); err != nil {
 		return fmt.Errorf("set write deadline failed: %w", err)
 	}
@@ -104,7 +115,15 @@ func (c *UDPClient) ReceiveFrame() (Frame, error) {
 	if err != nil {
 		return Frame{}, fmt.Errorf("udp read failed: %w", err)
 	}
-	frame, err := DecodeFrame(buf[:n])
+	packet := buf[:n]
+	// Unwrap Salamander outer obfuscation when enabled.
+	if len(c.SalamanderPSK) > 0 {
+		packet, err = nabuCrypto.SalamanderDecode(c.SalamanderPSK, packet)
+		if err != nil {
+			return Frame{}, fmt.Errorf("salamander decode: %w", err)
+		}
+	}
+	frame, err := DecodeFrame(packet)
 	if err != nil {
 		return Frame{}, err
 	}
@@ -150,7 +169,17 @@ func (c *UDPClient) MeasureRTT(streamID uint16, seq uint32) (time.Duration, erro
 		if err != nil {
 			return 0, fmt.Errorf("pong read failed: %w", err)
 		}
-		f, err := DecodeFrame(buf[:n])
+		raw := buf[:n]
+		// Unwrap Salamander when enabled — MeasureRTT bypasses ReceiveFrame so
+		// we must apply the same decoding here to avoid an infinite skip-loop.
+		if len(c.SalamanderPSK) > 0 {
+			decoded, decErr := nabuCrypto.SalamanderDecode(c.SalamanderPSK, raw)
+			if decErr != nil {
+				continue // Salamander auth failed → skip
+			}
+			raw = decoded
+		}
+		f, err := DecodeFrame(raw)
 		if err != nil {
 			continue // skip malformed frame
 		}

@@ -37,6 +37,7 @@ func main() {
 	wsCert := flag.String("ws-cert", "", "WSS TLS sertifika dosyası (PEM); bosssa self-signed")
 	wsKey := flag.String("ws-key", "", "WSS TLS anahtar dosyası (PEM); bosssa self-signed")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
+	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'sı (client ile aynı olmalı; sadece UDP modunda geçerli)")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
 	flag.Parse()
@@ -99,6 +100,10 @@ func main() {
 	}
 	if *psk != "" {
 		udpServer.PSK = []byte(*psk)
+	}
+	if *salamanderPSK != "" {
+		udpServer.SalamanderPSK = []byte(*salamanderPSK)
+		log.Info("salamander UDP obfuscation etkin")
 	}
 
 	if *statsAddr != "" {
