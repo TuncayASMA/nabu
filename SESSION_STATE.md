@@ -3,31 +3,32 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-09
-Oturum: 1.26 (Tamamlandı)
+Oturum: 1.27 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS Obfuscation
+- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS/Salamander Obfuscation
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
   - ✅ WebSocket obfuscation RFC 6455 (Oturum 1.25)
   - ✅ uTLS Chrome/Firefox/Edge fingerprint (Oturum 1.26)
-  - 🔜 Salamander UDP obfuscation (Oturum 1.27)
-- Oturum: 1.26 → Sonraki: 1.27 (Salamander UDP obfuscation)
+  - ✅ Salamander UDP obfuscation AES-256-GCM (Oturum 1.27)
+  - 🔜 Probe defense + aktif prob savunması (Oturum 1.28)
+- Oturum: 1.27 → Sonraki: 1.28 (Probe defense — kimlik doğrulamasız bağlantıya gerçek HTTP yanıtı)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.27 — Salamander UDP obfuscation:
-1. pkg/obfuscation/salamander.go: SalamanderConn — UDP üzerinde
-   [8B random salt][AES-GCM şifreli payload] — her frame farklı salt
-   transport.Layer interface impl (SendFrame/ReceiveFrame)
-2. pkg/obfuscation/salamander_test.go: 5+ unit test
-3. pkg/relay/udp_server.go: SalamanderMode bool — gelen UDP frame
-   salt+decrypt logic ekle (opsiyonel mod)
-4. cmd/nabu-client: --obfuscation=salamander desteği
-5. test/integration: TestSalamanderUDPEcho
-6. PROTOCOL.md v1.6: §16 Salamander UDP Obfuscation
+Oturum 1.28 — Probe Defense (aktif prob savunması):
+1. pkg/relay/probe_defense.go: ProbeDefense — kimliği doğrulanmamış
+   TCP bağlantıya gerçek HTTP/1.1 yanıtı sun (blog/portfolio görünümü)
+   - RandomDecoy(): 3 statik HTML sayfa (/, /about, /blog)
+   - ProbeDetector: IP bazlı erişim sayacı — 3+ başarısız deney → ban 5 dk
+2. pkg/relay/tcp_server.go: ProbeDefense alanı; NABU handshake başarısız
+   olursa ProbeDefense.Handle(conn) → decoy HTTP yaz, kapat
+3. pkg/relay/probe_defense_test.go: unit test (decoy response, ban, unban)
+4. test/integration: TestProbeDefenseDecoyResponse + TestProbeDefenseBanAfterN
+5. PROTOCOL.md v1.7: §17 Probe Defense
 ```
 
 ## Tamamlananlar
@@ -216,11 +217,23 @@ Oturum 1.27 — Salamander UDP obfuscation:
 - [x] cmd/nabu-client/main.go: --obfs-utls + --obfs-utls-fingerprint flags
 - [x] pkg/obfuscation/utls_dialer_test.go: 6 unit test (parse/chrome/firefox/unknown/ws-flag/hc-flag) PASS
 - [x] git commit 77115bf (Oturum 1.26)
+- [x] pkg/crypto/salamander.go: SalamanderEncode/Decode, HKDF-SHA256 per-frame key, AES-256-GCM envelope (overhead=36B)
+- [x] pkg/crypto/salamander_test.go: 7 unit test (RoundTrip/NonDet/WrongPSK/ShortPacket/EmptyPSK/EmptyPayload/Tampered) PASS
+- [x] pkg/transport/udp_client.go: SalamanderPSK field; SendFrame encode / ReceiveFrame decode + MeasureRTT Salamander bug fix
+- [x] pkg/relay/udp_server.go: SalamanderPSK field; decode ReadFrom loop; encode sendFrame+sendHandshakeACK
+- [x] pkg/tunnel/relay_handler.go: NewRelayHandlerUDPSalamander(relayAddr, psk, salamanderPSK)
+- [x] cmd/nabu-client/main.go: --salamander-psk flag
+- [x] cmd/nabu-relay/main.go: --salamander-psk flag
+- [x] test/integration: TestSalamanderUDPEcho + TestSalamanderWrongPSKRejected PASS
+- [x] docs/PROTOCOL.md v1.6: §16 Salamander UDP Obfuscation
+- [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL
+- [x] golangci-lint clean
+- [x] git commit 95096f0 (Oturum 1.27)
 
 ## Yarım Kalanlar
-- Salamander UDP obfuscation (salt+AES-GCM per-frame) → Oturum 1.27
+- Probe defense (gerçek HTTP camouflage + IP ban) → Oturum 1.28
 - Connection multiplexing (multiple streams over one TLS session)
-- Probe defense (gerçek HTTP/3 camouflage) → Sprint 8.4
+- QUIC/HTTP3 maskeleme (Sprint 9)
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
