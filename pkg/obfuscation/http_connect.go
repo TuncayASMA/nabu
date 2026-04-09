@@ -25,6 +25,8 @@ import (
 	"net/url"
 	"time"
 
+	utls "github.com/refraction-networking/utls"
+
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
 
@@ -51,6 +53,18 @@ type HTTPConnect struct {
 	// RelayTLSConfig, when non-nil, wraps the TCP connection with TLS before
 	// sending any NABU frame.  Set InsecureSkipVerify for self-signed relay certs.
 	RelayTLSConfig *tls.Config
+
+	// UTLSEnabled, when true, replaces the standard Go TLS dialer with a uTLS
+	// dialer that mimics the ClientHello of a real browser (Chrome by default).
+	// This prevents TLS fingerprinting by DPI engines.  RelayTLSConfig.InsecureSkipVerify
+	// is forwarded to the uTLS handshake when RelayTLSConfig is non-nil.
+	// UTLSEnabled has no effect when RelayTLSConfig is nil (plain TCP).
+	UTLSEnabled bool
+
+	// UTLSFingerprint selects the browser fingerprint (case-insensitive).
+	// Valid values: chrome (default), firefox, safari, edge, golang, random.
+	// Ignored when UTLSEnabled is false.
+	UTLSFingerprint string
 
 	conn   net.Conn
 	reader *bufio.Reader
@@ -115,8 +129,27 @@ func (h *HTTPConnect) Connect() error {
 	}
 
 	var conn net.Conn = tcpConn
-	if h.RelayTLSConfig != nil {
-		// Determine the Server Name for TLS SNI from RelayAddr (not ProxyAddr).
+	if h.UTLSEnabled && h.RelayTLSConfig != nil {
+		// uTLS path: close the plain TCP conn first, UTLSDial opens its own.
+		_ = tcpConn.Close()
+		fingerprint := h.UTLSFingerprint
+		if fingerprint == "" {
+			fingerprint = "chrome"
+		}
+		helloID, err := ParseUTLSFingerprint(fingerprint)
+		if err != nil {
+			return fmt.Errorf("utls fingerprint: %w", err)
+		}
+		utlsCfg := &utls.Config{
+			InsecureSkipVerify: h.RelayTLSConfig.InsecureSkipVerify, //nolint:gosec // caller opt-in
+			ServerName:         h.RelayTLSConfig.ServerName,
+		}
+		conn, err = UTLSDial(dialTarget, utlsCfg, helloID, h.DialTimeout)
+		if err != nil {
+			return err
+		}
+	} else if h.RelayTLSConfig != nil {
+		// Standard TLS path.
 		host, _, err := net.SplitHostPort(h.RelayAddr)
 		if err != nil {
 			_ = tcpConn.Close()

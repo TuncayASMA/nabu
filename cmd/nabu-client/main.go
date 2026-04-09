@@ -29,10 +29,12 @@ func main() {
 	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
-	obfsMode := flag.String("obfuscation", obfuscation.ModeNone, "Obfuscation modu: none | http-connect")
+	obfsMode := flag.String("obfuscation", obfuscation.ModeNone, "Obfuscation modu: none | http-connect | websocket")
 	obfsProxy := flag.String("obfs-proxy", "", "HTTP CONNECT proxy adresi (host:port) — sadece http-connect modunda kullanılır")
 	obfsTLS := flag.Bool("obfs-tls", false, "Relay bağlantısını TLS ile şifrele (DPI kaçınma için; http-connect modunda etkin)")
 	obfsTLSInsecure := flag.Bool("obfs-tls-insecure", false, "Relay TLS sertifikasını doğrulama (self-signed sertifikalar için)")
+	obfsUTLS := flag.Bool("obfs-utls", false, "TLS parmak izini tarayıcı ile örtüştür (uTLS; --obfs-tls veya --obfs-ws-tls ile birlikte kullanılır)")
+	obfsUTLSFingerprint := flag.String("obfs-utls-fingerprint", "chrome", "uTLS tarayıcı parmak izi: chrome | firefox | safari | edge | golang | random")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
@@ -113,15 +115,27 @@ func main() {
 	// When --obfs-tls is set, attach a TLS config to the obfuscation layer so
 	// the client-to-relay TCP connection is wrapped in TLS.
 	if *obfsTLS && obfsLayer != nil {
-		if hc, ok := obfsLayer.(*obfuscation.HTTPConnect); ok {
-			tlsCfg := &tls.Config{
-				MinVersion:         tls.VersionTLS13,
-				InsecureSkipVerify: *obfsTLSInsecure, //nolint:gosec // opt-in flag
+		tlsCfg := &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: *obfsTLSInsecure, //nolint:gosec // opt-in flag
+		}
+		switch l := obfsLayer.(type) {
+		case *obfuscation.HTTPConnect:
+			l.RelayTLSConfig = tlsCfg
+			if *obfsUTLS {
+				l.UTLSEnabled = true
+				l.UTLSFingerprint = *obfsUTLSFingerprint
 			}
-			hc.RelayTLSConfig = tlsCfg
-			log.Info("relay TLS etkin", slog.Bool("insecure", *obfsTLSInsecure))
-		} else {
-			log.Warn("--obfs-tls yalnızca http-connect modunda desteklenir; göz ardı ediliyor")
+			log.Info("relay TLS etkin", slog.Bool("insecure", *obfsTLSInsecure), slog.Bool("utls", *obfsUTLS), slog.String("fingerprint", *obfsUTLSFingerprint))
+		case *obfuscation.WebSocketLayer:
+			l.TLSConfig = tlsCfg
+			if *obfsUTLS {
+				l.UTLSEnabled = true
+				l.UTLSFingerprint = *obfsUTLSFingerprint
+			}
+			log.Info("relay WSS etkin", slog.Bool("insecure", *obfsTLSInsecure), slog.Bool("utls", *obfsUTLS), slog.String("fingerprint", *obfsUTLSFingerprint))
+		default:
+			log.Warn("--obfs-tls bu obfuscation modunda desteklenmiyor; göz ardı ediliyor", slog.String("mode", *obfsMode))
 		}
 	}
 

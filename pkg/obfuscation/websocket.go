@@ -22,6 +22,8 @@ import (
 	"net"
 	"time"
 
+	utls "github.com/refraction-networking/utls"
+
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
 
@@ -54,6 +56,16 @@ type WebSocketLayer struct {
 	// WebSocket upgrade (WSS).  Set tls.Config.InsecureSkipVerify for
 	// self-signed relay certificates in test/dev environments.
 	TLSConfig *tls.Config
+
+	// UTLSEnabled, when true, replaces the standard Go TLS dialer with a uTLS
+	// dialer that mimics the ClientHello of a real browser.
+	// TLSConfig must also be non-nil for uTLS to activate (it provides InsecureSkipVerify).
+	UTLSEnabled bool
+
+	// UTLSFingerprint selects the browser fingerprint (case-insensitive).
+	// Valid: chrome (default), firefox, safari, edge, golang, random.
+	// Ignored when UTLSEnabled is false.
+	UTLSFingerprint string
 
 	// rawConn is the underlying TCP (or TLS) connection; kept for deadline ops.
 	rawConn net.Conn
@@ -94,7 +106,26 @@ func (w *WebSocketLayer) Connect() error {
 	var conn net.Conn = tcpConn
 
 	// Optional TLS upgrade (WSS).
-	if w.TLSConfig != nil {
+	if w.UTLSEnabled && w.TLSConfig != nil {
+		// Close plain TCP conn; UTLSDial opens its own.
+		_ = tcpConn.Close()
+		fingerprint := w.UTLSFingerprint
+		if fingerprint == "" {
+			fingerprint = "chrome"
+		}
+		helloID, err := ParseUTLSFingerprint(fingerprint)
+		if err != nil {
+			return fmt.Errorf("utls fingerprint: %w", err)
+		}
+		utlsCfg := &utls.Config{
+			InsecureSkipVerify: w.TLSConfig.InsecureSkipVerify, //nolint:gosec // caller opt-in
+			ServerName:         w.TLSConfig.ServerName,
+		}
+		conn, err = UTLSDial(w.RelayAddr, utlsCfg, helloID, w.DialTimeout)
+		if err != nil {
+			return err
+		}
+	} else if w.TLSConfig != nil {
 		host, _, _ := net.SplitHostPort(w.RelayAddr)
 		cfg := w.TLSConfig.Clone()
 		if cfg.ServerName == "" {
