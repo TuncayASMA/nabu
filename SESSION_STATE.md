@@ -3,27 +3,31 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-09
-Oturum: 1.25 (Tamamlandı)
+Oturum: 1.26 (Tamamlandı)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket Obfuscation
+- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS Obfuscation
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
   - ✅ WebSocket obfuscation RFC 6455 (Oturum 1.25)
-  - 🔜 uTLS Chrome fingerprint (Oturum 1.26)
-- Oturum: 1.25 → Sonraki: 1.26 (uTLS Chrome fingerprint)
+  - ✅ uTLS Chrome/Firefox/Edge fingerprint (Oturum 1.26)
+  - 🔜 Salamander UDP obfuscation (Oturum 1.27)
+- Oturum: 1.26 → Sonraki: 1.27 (Salamander UDP obfuscation)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.26 — uTLS Chrome fingerprint:
-1. go get github.com/refraction-networking/utls
-2. pkg/obfuscation/utls_dialer.go: uTLSDial(addr, cfg, helloID) net.Conn
-3. WebSocketLayer.Connect() + HTTPConnect.Connect(): UTLSEnabled bool alanı
-4. cmd/nabu-client: --obfs-utls (bool) + --obfs-utls-fingerprint (string, default "chrome")
-5. pkg/obfuscation/utls_dialer_test.go: 3+ unit test
-6. PROTOCOL.md v1.6: §16 uTLS Traffic Normalisation
+Oturum 1.27 — Salamander UDP obfuscation:
+1. pkg/obfuscation/salamander.go: SalamanderConn — UDP üzerinde
+   [8B random salt][AES-GCM şifreli payload] — her frame farklı salt
+   transport.Layer interface impl (SendFrame/ReceiveFrame)
+2. pkg/obfuscation/salamander_test.go: 5+ unit test
+3. pkg/relay/udp_server.go: SalamanderMode bool — gelen UDP frame
+   salt+decrypt logic ekle (opsiyonel mod)
+4. cmd/nabu-client: --obfuscation=salamander desteği
+5. test/integration: TestSalamanderUDPEcho
+6. PROTOCOL.md v1.6: §16 Salamander UDP Obfuscation
 ```
 
 ## Tamamlananlar
@@ -200,12 +204,23 @@ Oturum 1.26 — uTLS Chrome fingerprint:
 - [x] Tüm testler geçti (go test -race ./...) — 9 paket 0 FAIL, goleak temiz
 - [x] golangci-lint clean
 - [x] git commit b66c68d (Oturum 1.24)
+- [x] pkg/obfuscation/websocket.go: WebSocketLayer (RFC 6455 framing, FIN/mask, server-mode AcceptConn)
+- [x] pkg/relay/tcp_server.go: AcceptWebSocket flag + handleConn WS handshake path
+- [x] cmd/nabu-relay/main.go: --serve-ws / --ws-addr flags
+- [x] test/integration: TestWebSocketRelayDirectEcho PASS
+- [x] docs/PROTOCOL.md v1.5: §15 WebSocket Obfuscation
+- [x] git commit 38fd74d (Oturum 1.25)
+- [x] pkg/obfuscation/utls_dialer.go: UTLSDial() + ParseUTLSFingerprint() (chrome/firefox/safari/edge/golang/random)
+- [x] pkg/obfuscation/http_connect.go: UTLSEnabled bool + UTLSFingerprint string alanları
+- [x] pkg/obfuscation/websocket.go: UTLSEnabled bool + UTLSFingerprint string alanları
+- [x] cmd/nabu-client/main.go: --obfs-utls + --obfs-utls-fingerprint flags
+- [x] pkg/obfuscation/utls_dialer_test.go: 6 unit test (parse/chrome/firefox/unknown/ws-flag/hc-flag) PASS
+- [x] git commit 77115bf (Oturum 1.26)
 
 ## Yarım Kalanlar
-- WebSocket obfuscation layer (ws:// disguise) → Oturum 1.25 (Seçenek A)
-- Relay TLS cert pinning (SHA-256 fingerprint) → Oturum 1.25 (Seçenek B)
+- Salamander UDP obfuscation (salt+AES-GCM per-frame) → Oturum 1.27
 - Connection multiplexing (multiple streams over one TLS session)
-- nabu-client config file TLS cert support
+- Probe defense (gerçek HTTP/3 camouflage) → Sprint 8.4
 
 ## Açık Sorular / Blokerlar
 - Varsayilan relay portu kesinlesti: UDP/443
