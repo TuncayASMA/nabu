@@ -3,33 +3,42 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-09
-Oturum: 1.27 (Tamamlandı)
+Oturum: 1.28 (Tamamlandı — commit be7df5f)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS/Salamander Obfuscation
+- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS/Salamander/ProbeDefense Obfuscation
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
   - ✅ WebSocket obfuscation RFC 6455 (Oturum 1.25)
   - ✅ uTLS Chrome/Firefox/Edge fingerprint (Oturum 1.26)
   - ✅ Salamander UDP obfuscation AES-256-GCM (Oturum 1.27)
-  - 🔜 Probe defense + aktif prob savunması (Oturum 1.28)
-- Oturum: 1.27 → Sonraki: 1.28 (Probe defense — kimlik doğrulamasız bağlantıya gerçek HTTP yanıtı)
+  - ✅ Probe defense + aktif prob savunması (Oturum 1.28)
+  - 🔜 Bağlantı çoğaltma / QUIC/HTTP3 maskeleme (Oturum 1.29)
+- Oturum: 1.28 → Sonraki: 1.29
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.28 — Probe Defense (aktif prob savunması):
-1. pkg/relay/probe_defense.go: ProbeDefense — kimliği doğrulanmamış
-   TCP bağlantıya gerçek HTTP/1.1 yanıtı sun (blog/portfolio görünümü)
-   - RandomDecoy(): 3 statik HTML sayfa (/, /about, /blog)
-   - ProbeDetector: IP bazlı erişim sayacı — 3+ başarısız deney → ban 5 dk
-2. pkg/relay/tcp_server.go: ProbeDefense alanı; NABU handshake başarısız
-   olursa ProbeDefense.Handle(conn) → decoy HTTP yaz, kapat
-3. pkg/relay/probe_defense_test.go: unit test (decoy response, ban, unban)
-4. test/integration: TestProbeDefenseDecoyResponse + TestProbeDefenseBanAfterN
-5. PROTOCOL.md v1.7: §17 Probe Defense
+Oturum 1.29 — JA3/JA4 parmak izi normalizasyonu + QUIC/HTTP3 maskeleme:
+1. pkg/obfuscation/ja3_normalizer.go: JA3 TLS parmak izini normalize et
+   - Cipher suite sırasını karıştır, extension sırası normalize et
+   - uTLS ile tam tarayıcı impersonasyonu
+2. pkg/obfuscation/http3_layer.go (opsiyonel): QUIC/HTTP3 üzerinden tünel
+   - quic-go kütüphanesi entegrasyonu
+   - NABU frame'lerini HTTP/3 stream'leri üzerinden taşı
+3. PROTOCOL.md v1.8: §18 JA3 Normalization
 ```
+
+## Oturum 1.28 Özeti
+- pkg/relay/probe_defense.go: ProbeDefense struct (BanThreshold=5, BanWindow=5min,
+  BanDuration=30min), HandleProbe (decoy HTML /, /about, /blog — nginx/1.24.0 header),
+  IP ban tracker, IsHTTPMethodPrefix sniff helper — 7/7 unit test geçti
+- pkg/relay/tcp_server.go: TCPServer.ProbeDefense field; 3s Peek(4) sniff;
+  PSK auth failure path
+- cmd/nabu-relay/main.go: --probe-defense flag
+- test/integration/probe_defense_test.go: 4/4 integration test geçti
+- docs/PROTOCOL.md: v1.7 — §17 Probe Defense eklendi
 
 ## Tamamlananlar
 - [x] RUNBOOK.md oluşturuldu
