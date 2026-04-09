@@ -51,6 +51,10 @@ type TCPServer struct {
 	// TLSConfig, when non-nil, wraps every accepted connection with TLS.
 	// A passive DPI observer sees only TLS ClientHello (indistinguishable from HTTPS).
 	TLSConfig *tls.Config
+	// ProbeDefense, when non-nil, handles connections that fail the NABU
+	// handshake by serving a decoy HTTP/1.1 response and banning repeat probers.
+	// This makes the relay look like an ordinary web server to active probers.
+	ProbeDefense *ProbeDefense
 	// Stats exposes server-wide traffic counters.
 	Stats GlobalStats
 
@@ -136,6 +140,20 @@ func (s *TCPServer) handleConn(ctx context.Context, conn net.Conn) {
 	// Per-connection sliding-window replay detector.
 	replay := NewReplayWindow()
 
+	// Probe defense: peek at the first 4 bytes before committing to NABU frame
+	// parsing.  HTTP requests (active censors / scanners) are served a decoy
+	// HTML page; timed-out connections are dropped silently.
+	if s.ProbeDefense != nil {
+		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		peek, peekErr := reader.Peek(4)
+		_ = conn.SetReadDeadline(time.Time{})
+		if peekErr != nil || IsHTTPMethodPrefix(peek) {
+			s.Logger.Info("probe detected, serving decoy", "remote", remote.String())
+			s.ProbeDefense.HandleProbe(conn, reader)
+			return
+		}
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -183,7 +201,10 @@ func (s *TCPServer) handleConn(ctx context.Context, conn net.Conn) {
 		// Require handshake when PSK is configured.
 		if len(s.PSK) > 0 && len(sessionKey) == 0 && frame.Flags&transport.FlagHandshake == 0 {
 			s.Logger.Warn("frame dropped: handshake required", "remote", remote.String())
-			continue
+			if s.ProbeDefense != nil {
+				s.ProbeDefense.HandleProbe(conn, reader)
+			}
+			return
 		}
 
 		switch {

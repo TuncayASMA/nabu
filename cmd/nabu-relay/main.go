@@ -37,7 +37,8 @@ func main() {
 	wsCert := flag.String("ws-cert", "", "WSS TLS sertifika dosyası (PEM); bosssa self-signed")
 	wsKey := flag.String("ws-key", "", "WSS TLS anahtar dosyası (PEM); bosssa self-signed")
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
-	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'sı (client ile aynı olmalı; sadece UDP modunda geçerli)")
+	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'si (client ile aynı olmalı; sadece UDP modunda geçerli)")
+	probeDefense := flag.Bool("probe-defense", false, "Aktif prob savunması: kimliği doğrulanmamış TCP bağlantılara sahte HTTP yanıtı döndür")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
 	flag.Parse()
@@ -148,6 +149,10 @@ func main() {
 			tcpServer.PSK = []byte(*psk)
 		}
 		tcpServer.AcceptHTTPConnect = *acceptHTTPConnect
+		if *probeDefense {
+			tcpServer.ProbeDefense = relay.NewProbeDefense()
+			log.Info("prob savunması etkin (TCP relay)")
+		}
 		if *tcpTLS {
 			tlsCfg, err := relay.BuildTLSConfig(*tcpCert, *tcpKey)
 			if err != nil {
@@ -179,6 +184,10 @@ func main() {
 			wsServer.PSK = []byte(*psk)
 		}
 		wsServer.AcceptWebSocket = true
+		if *probeDefense {
+			wsServer.ProbeDefense = relay.NewProbeDefense()
+			log.Info("prob savunması etkin (WS relay)")
+		}
 		if *wsTLS {
 			tlsCfg, err := relay.BuildTLSConfig(*wsCert, *wsKey)
 			if err != nil {

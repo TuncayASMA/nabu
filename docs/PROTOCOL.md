@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 1.4 (Faz 2 — Anti-replay Window + Client TLS Dialer)  
+**Version:** 1.7 (Faz 2 — Probe Defense + Decoy HTTP + IP Ban)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -23,7 +23,9 @@
 13. [TLS Wrapping (Faz 2 — DPI Evasion)](#tls-wrapping-faz-2--dpi-evasion)
 14. [Anti-replay Window](#anti-replay-window)
 15. [Security Considerations](#security-considerations)
-16. [Changelog](#changelog)
+16. [Salamander UDP Obfuscation](#16-salamander-udp-obfuscation)
+17. [Probe Defense](#17-probe-defense)
+18. [Changelog](#changelog)
 
 ---
 
@@ -706,6 +708,7 @@ observability without locks.
 | 1.4     | 1.24   | Added §14 Anti-replay Window (`ReplayWindow` 64-frame sliding window); integrated into `TCPServer` + `UDPServer`; `HTTPConnect.RelayTLSConfig` client-side TLS dialer; `--obfs-tls`/`--obfs-tls-insecure` flags in `nabu-client` |
 | 1.5     | 1.25   | Added §15 WebSocket Obfuscation (`WebSocketLayer`, RFC 6455 binary-frame tunnelling); `TCPServer.AcceptWebSocket`; `ModeWebSocket` factory; `--serve-ws`/`--ws-addr`/`--ws-tls`/`--ws-cert`/`--ws-key` flags in `nabu-relay`; WSS (WebSocket over TLS) support |
 | 1.6     | 1.27   | Added §16 Salamander UDP Obfuscation (`SalamanderEncode`/`SalamanderDecode` in `pkg/crypto`); `UDPClient.SalamanderPSK`; `UDPServer.SalamanderPSK`; `NewRelayHandlerUDPSalamander`; `--salamander-psk` flags in `nabu-client` and `nabu-relay`; fixed `MeasureRTT` Salamander bypass |
+| 1.7     | 1.28   | Added §17 Probe Defense (`ProbeDefense` struct in `pkg/relay`); HTTP method sniffing at connection start; decoy HTML server (fake blog); IP-level ban tracker with sliding window; `TCPServer.ProbeDefense` field; `--probe-defense` flag in `nabu-relay` |
 
 ---
 
@@ -846,3 +849,129 @@ leaves the host NIC and after it arrives.  The inner NABU frame structure
 encryption (`--psk`) operates on the payload inside the NABU frame and is
 independent of Salamander — both can be active simultaneously for defence in
 depth.
+
+---
+
+## §17 Probe Defense
+
+Probe Defense makes the relay appear as an ordinary HTTPS/web server to any
+active prober or censor that does not possess the client PSK.  It operates at
+the TCP connection level, before any NABU frame parsing.
+
+### Motivation
+
+Active censors send HTTP/HTTPS probes to discovered relay IP:port combinations
+to test whether the endpoint is a proxy.  Without probe defense the relay
+returns TCP-level errors or silent drops that are fingerprint-able as
+"not a web server".  With probe defense the relay responds with a plausible
+HTTP/1.1 response, making it indistinguishable from a legitimate web host.
+
+Repeat probers are banned at the IP level, reducing per-probe relay load and
+limiting information leakage through timing of decoy responses.
+
+### Algorithm
+
+#### Step 1 — Connection sniff (pre-frame)
+
+For every new TCP connection, the relay reads the first 4 bytes with a 3-second
+deadline using `bufio.Reader.Peek`:
+
+```
+if bytes ∈ {"GET ", "POST", "HEAD", "CONN", "OPTI", "PUT ", "DELE", "PATC", "TRAC"}
+    → serve_decoy(conn)
+if timeout expires or read error
+    → serve_decoy(conn)
+else
+    → proceed with NABU frame parsing
+```
+
+#### Step 2 — PSK auth failure (post-frame)
+
+If a PSK is configured and the client sends a non-Handshake frame without
+first completing the key exchange, the relay calls `ProbeDefense.HandleProbe`
+instead of silently closing the connection.
+
+#### Step 3 — Decoy response
+
+`HandleProbe` reads the full HTTP request (if present) to determine the
+requested path, then serves one of three static HTML pages:
+
+| Path | Decoy page |
+|------|------------|
+| `/about` | "About Me" personal page |
+| `/blog` | Blog post listing |
+| `*` (default) | Homepage |
+
+All responses carry standard headers mimicking nginx 1.24.0 with
+`Content-Type: text/html; charset=utf-8` and `Connection: close`.
+
+#### Step 4 — IP ban tracking
+
+After serving any decoy (or dropping a connection that is already banned), the
+prober's IP is recorded in a sliding-window counter:
+
+```
+if failures_in_window(ip) >= BanThreshold
+    → ban(ip, BanDuration)
+    → subsequent connections from ip are silently closed (no decoy response)
+```
+
+### Default Thresholds
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `BanThreshold` | 5 | Failures within `BanWindow` before ban |
+| `BanWindow` | 5 min | Rolling window for failure counting |
+| `BanDuration` | 30 min | How long a banned IP is silently dropped |
+
+All thresholds are configurable via struct fields on `ProbeDefense`.
+
+### API
+
+```go
+// pkg/relay/probe_defense.go
+
+type ProbeDefense struct {
+    BanThreshold int           // default 5
+    BanWindow    time.Duration // default 5 min
+    BanDuration  time.Duration // default 30 min
+}
+
+func NewProbeDefense() *ProbeDefense
+func (pd *ProbeDefense) HandleProbe(conn net.Conn, reader *bufio.Reader)
+func (pd *ProbeDefense) IsBanned(addr net.Addr) bool
+func (pd *ProbeDefense) ResetBan(addr string)   // test helper
+
+// IsHTTPMethodPrefix reports whether the first 4 bytes look like an HTTP
+// method prefix ("GET ", "POST", "HEAD", "CONN", "OPTI", "PUT ",
+// "DELE", "PATC", "TRAC").
+func IsHTTPMethodPrefix(b []byte) bool
+```
+
+### Integration Points
+
+| Component | Field | Effect |
+|-----------|-------|--------|
+| `relay.TCPServer` | `ProbeDefense *ProbeDefense` | Sniffs first 4 bytes; serves decoy on HTTP or timeout; bans repeat probers |
+| `relay.WebSocketServer` (future) | `ProbeDefense *ProbeDefense` | Same — before WS upgrade |
+
+### CLI Flag
+
+```
+nabu-relay --probe-defense   # enable ProbeDefense on TCP (and WS if --serve-ws)
+```
+
+### Security Notes
+
+- The decoy pages are **static** — dynamic content (e.g., serving real blog
+  posts from a database) would increase attack surface without censor-evasion
+  benefit.
+- The ban tracker runs **in-process** with no persistence.  A relay restart
+  (or process recycle) clears all bans.  For long-lived deployments consider
+  externalising ban state to Redis.
+- `IsHTTPMethodPrefix` matches only 4-byte prefixes; it does **not** parse
+  full HTTP.  A real HTTP parse happens inside `HandleProbe` via
+  `http.ReadRequest` for path routing.
+- Decrypt errors and replay-window violations do **not** currently trigger
+  `HandleProbe`.  This is intentional: those are NABU-aware attacks and the
+  silent close is more revealing than a decoy response.
