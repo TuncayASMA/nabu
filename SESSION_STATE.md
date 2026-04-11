@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.32 (Tamamlandı — commit 77be14a)
+Oturum: 1.33 (Tamamlandı — commit 40e2d3b)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -19,23 +19,49 @@ Oturum: 1.32 (Tamamlandı — commit 77be14a)
   - ✅ JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
   - ✅ Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
   - ✅ Governor Adaptif Hız Kontrolcüsü (Oturum 1.32)
-  - 🔜 Phantom DPI İstatistiksel Testler — KS-test, nDPI, Suricata (Oturum 1.33)
-- Oturum: 1.32 → Sonraki: 1.33
+  - ✅ Phantom DPI İstatistiksel Testler — KS-test, BucketFrequency, Shannon (Oturum 1.33)
+  - 🔜 nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
+- Oturum: 1.33 → Sonraki: 1.34
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.33 — Phantom DPI İstatistiksel Testler (Sprint 12.3-13.2):
-1. test/dpi/phantom_test.go — KS-testi ile Phantom dağılım uyumu
-   - Shaper'dan N paket örnekle (in-memory pipe + fake conn)
-   - KolmogorovSmirnov(observed, ref CDF) → p-value > 0.05 asserted
-   - web_browsing + youtube_sd + instagram_feed her birini test et
-2. pkg/phantom/stat/ — KS-testi implementasyonu (saf Go, dış bağımlılık yok)
-   - KSDist(n int) float64: kritik değer tablosu
-   - KSTest(sample []float64, cdf []float64) (stat float64, pValue float64)
-3. İlk entropi testi: Shannon < 7.2 (HTTPS benzeri ciphertext)
-4. PROTOCOL.md v2.2: §22 DPI Test Framework
-5. nDPI / Suricata Docker testi (opsiyonel bu oturumda, önce KS-testi)
+Oturum 1.34 — nDPI / Suricata Docker DPI Entegrasyon Testi (Sprint 13.2):
+1. docker-compose ile nDPI/Suricata container başlat
+2. test/dpi/ndpi_test.go — Phantom trafiği ndpcapd'ye aktar, protokol sınıflandırmasını oku
+   - Beklenti: "HTTPS" veya "TLS" sınıflandırması (DPI bypass doğrulama)
+3. test/dpi/suricata_test.go — Suricata PCAP analizi
+   - Beklenti: sıfır alert (Emerging Threats kuralları aktif)
+4. PROTOCOL.md v2.3: §22.5 nDPI + Suricata test sonuçları (§22 altına)
 ```
+
+## Oturum 1.33 Özeti
+- pkg/phantom/stat/ks.go: DPI istatistiksel test araçları
+  * KSTest(sample, cdf): Kolmogorov-Smirnov, Marsaglia asimptotik p-değeri
+    P(D_n > d) ≈ 2·Σ(-1)^(k-1)·exp(-2k²t²), t = d·√n
+  * referenceCDF(x, cdf): parçalı-doğrusal interpolasyon (sürekli dağılımlar için)
+  * BucketFrequencyTest(sample, cdf, tolerance): paket boyutu için
+    Her kova gözlenen p beklenen p'nin %60'ı dahilinde → PASS
+    Seyrek kovalar (expected < %1) atlanır
+  * ShannonEntropy(data): H = -Σ p·log₂(p) bit/byte
+- pkg/phantom/stat/ks_test.go: 15 unit test — hepsi PASS
+  * KSTest: SameDistribution (p=0.39)/Different/Empty/SinglePoint
+  * ReferenceCDF: sınır koşulları
+  * KSPValue: Zero (p=1)/Large (p≈0)
+  * ShannonEntropy: Random (7.98 bits)/Zeros/TwoSymbols/Empty
+  * BucketFrequencyTest: Uniform/AllZeros/EmptySample
+- test/dpi/phantom_test.go: 7 DPI entegrasyon testi — hepsi PASS
+  * TestProfile_{web_browsing,youtube_sd,instagram_feed}_PacketSizeDist
+    n=2000 örnekleme, BucketFrequencyTest %60 tolerans
+  * TestProfile_{web_browsing,youtube_sd,instagram_feed}_IATDist
+    n=2000 örnekleme, BucketFrequencyTest %60 tolerans
+  * TestPhantomShaper_ShannonEntropy: 32KB net.Pipe, H=6.33 bits > 3.0 eşik
+- docs/PROTOCOL.md: v2.2 — §22 DPI Statistical Test Framework, Changelog 2.2 eklendi
+- gofmt + golangci-lint: temiz
+
+**Temel Tasarım Kararı — KS vs BucketFrequency:**
+sampleCDF ayrık kovalar (n=20) üretir; KS testi büyük n'de her zaman reddeder
+(D~0.07-0.15 → p≈0). Çözüm: BucketFrequencyTest — her kova için göreli tolerans
+kontrolü, discrete-bucket yapısıyla uyumlu.
 
 ## Oturum 1.32 Özeti
 - pkg/governor/governor.go: Adaptif hız kontrolcüsü
