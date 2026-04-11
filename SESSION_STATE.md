@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.38 (Tamamlandı — commit c01485d)
+Oturum: 1.39 (Tamamlandı — commit 003117f)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -25,19 +25,34 @@ Oturum: 1.38 (Tamamlandı — commit c01485d)
   - ✅ Relay Ağı Konfigürasyonu — MultiPathConn + UDP echo probe (Oturum 1.36)
   - ✅ Terraform Relay Provisioning — OCI ARM64 + Hetzner CAX11 (Oturum 1.37)
   - ✅ eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
-  - 🔜 Governor Karar Motoru — eBPF entegrasyonu + karar döngüsü (Oturum 1.39)
-- Oturum: 1.38 → Sonraki: 1.39
+  - ✅ Governor Karar Motoru — eBPF entegrasyonu + karar döngüsü (Oturum 1.39)
+  - 🔜 FEC Katmanı — XOR/Reed-Solomon kodlayıcı + DecisionEngine entegrasyonu (Oturum 1.40)
+- Oturum: 1.39 → Sonraki: 1.40
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.39 — Governor Karar Motoru (Sprint 17.4-18.2 — RUNBOOK §18):
-1. pkg/governor/governor.go: eBPF Monitor entegrasyonu
-   - NewMonitor(iface, bufSize) çağrısı
-   - 100ms karar döngüsü: eBPF Snapshot → adaptif hız hesabı
-   - Outputs: phantomRate, schedulerBias, fecRatio, burstMode
-2. pkg/governor/ebpf entegrasyon testi (gerçek iface varsa)
-3. PROTOCOL.md v2.8: §28 Governor Karar Motoru
+Oturum 1.40 — FEC Katmanı (Sprint 18.3-19 — RUNBOOK §19):
+1. pkg/fec/ — Forward Error Correction katmanı
+   - XOR-based FEC encoder/decoder (Reed-Solomon 2x2 baseline)
+   - FECLayer: Wrap/Unwrap frame, ratio → how many redundant packets
+   - DecisionEngine.FECRatio ile entegrasyon
+2. pkg/fec/fec_test.go: unit testler
+3. PROTOCOL.md v2.9: §29 FEC Katmanı
 ```
+
+## Oturum 1.39 Özeti
+- pkg/governor/decision.go: DecisionEngine — 100ms adaptif kontrol döngüsü
+  * PhantomRate [0, MaxPhantomBytesS]: Phantom injection rate
+  * SchedulerBias [-1, +1]: Multipath scheduler weight bias
+  * FECRatio [0, 1]: FEC redundancy ratio (0.05 baseline, 0.25 spike)
+  * BurstMode bool: utilEWMA < 30% ve IAT spike yok
+  * SnapshotProvider interface: ebpf.Monitor tarafından sağlanır
+  * IAT spike detection: EWMA (α=0.1), default eşik 3× EWMA
+  * utilEWMA (α=0.2): proc/net/dev link kullanımı önbellemleme
+  * Run(ctx) -> <-chan Decision, non-blocking channel drain
+- pkg/governor/decision_test.go: 14 test — tümü PASS (-race)
+- docs/PROTOCOL.md: v2.7 → v2.8 — §28 Governor Karar Motoru
+- Full test suite: tüm PASS
 
 ## Oturum 1.38 Özeti
 - pkg/governor/ebpf/bpf/nabu_monitor.c: TC clsact hook kernel programı
