@@ -2,12 +2,12 @@
 # Bu dosyayı her oturum başında oku, her oturum sonunda güncelle.
 
 ## Son Güncelleme
-Tarih: 2026-04-09
-Oturum: 1.28 (Tamamlandı — commit be7df5f)
+Tarih: 2026-04-11
+Oturum: 1.29 (Tamamlandı — commit 5dcbacf)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8 — TCP/HTTPConnect/TLS/WebSocket/uTLS/Salamander/ProbeDefense Obfuscation
+- Sprint: 8-9 — QUIC/HTTP3 Maskeleme
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
@@ -15,30 +15,34 @@ Oturum: 1.28 (Tamamlandı — commit be7df5f)
   - ✅ uTLS Chrome/Firefox/Edge fingerprint (Oturum 1.26)
   - ✅ Salamander UDP obfuscation AES-256-GCM (Oturum 1.27)
   - ✅ Probe defense + aktif prob savunması (Oturum 1.28)
-  - 🔜 Bağlantı çoğaltma / QUIC/HTTP3 maskeleme (Oturum 1.29)
-- Oturum: 1.28 → Sonraki: 1.29
+  - ✅ QUIC/H3 transport — QUICServer + QUICLayer (Oturum 1.29)
+  - 🔜 JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
+- Oturum: 1.29 → Sonraki: 1.30
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.29 — JA3/JA4 parmak izi normalizasyonu + QUIC/HTTP3 maskeleme:
-1. pkg/obfuscation/ja3_normalizer.go: JA3 TLS parmak izini normalize et
-   - Cipher suite sırasını karıştır, extension sırası normalize et
-   - uTLS ile tam tarayıcı impersonasyonu
-2. pkg/obfuscation/http3_layer.go (opsiyonel): QUIC/HTTP3 üzerinden tünel
-   - quic-go kütüphanesi entegrasyonu
-   - NABU frame'lerini HTTP/3 stream'leri üzerinden taşı
-3. PROTOCOL.md v1.8: §18 JA3 Normalization
+Oturum 1.30 — JA3/JA4 TLS Parmak İzi Normalizasyonu:
+1. pkg/obfuscation/ja3_normalizer.go: TLS ClientHello yapısını düzenle
+   - uTLS ile cipher suite permütasyonu — DPI parmak izini kıl
+   - Extension sırasını normalize et (Chrome/Firefox profilleri)
+   - ECH (Encrypted Client Hello) desteği ekle
+2. pkg/obfuscation/utls_dialer.go: uTLS dialer'ı JA3 normalizasyonuyla entegre et
+3. Unit testler: JA3 parmak izi doğrulama
+4. PROTOCOL.md v1.9: §19 JA3/JA4 Fingerprint Normalization
+Alternatif: Oturum 1.30 — Micro-Phantom Trafik Profil Motoru (Sprint 10)
 ```
 
-## Oturum 1.28 Özeti
-- pkg/relay/probe_defense.go: ProbeDefense struct (BanThreshold=5, BanWindow=5min,
-  BanDuration=30min), HandleProbe (decoy HTML /, /about, /blog — nginx/1.24.0 header),
-  IP ban tracker, IsHTTPMethodPrefix sniff helper — 7/7 unit test geçti
-- pkg/relay/tcp_server.go: TCPServer.ProbeDefense field; 3s Peek(4) sniff;
-  PSK auth failure path
-- cmd/nabu-relay/main.go: --probe-defense flag
-- test/integration/probe_defense_test.go: 4/4 integration test geçti
-- docs/PROTOCOL.md: v1.7 — §17 Probe Defense eklendi
+## Oturum 1.29 Özeti
+- pkg/relay/quic_server.go: QUICServer — QUIC/TLS-1.3 listener, NABU frames over
+  QUIC streams, ALPN nabu/1+h3, ProbeDefense, PSK, ReplayWindow, anti-HOL-blocking
+  multiplexing — 3/3 unit test geçti
+- pkg/obfuscation/quic_layer.go: QUICLayer — client-side transport.Layer, connection
+  multiplexing via OpenStreamSync, TLS config auto-ALPN
+- test/integration/quic_test.go: 3/3 integration test geçti (PingPong, ConnectEcho,
+  MultiStream concurrency)
+- cmd/nabu-relay/main.go: --serve-quic/--quic-addr/--quic-cert/--quic-key flags
+- docs/PROTOCOL.md: v1.8 — §18 QUIC/H3 Transport eklendi
+- go.mod: quic-go v0.59.0 direkt bağımlılık
 
 ## Tamamlananlar
 - [x] RUNBOOK.md oluşturuldu
