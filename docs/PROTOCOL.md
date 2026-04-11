@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 1.8 (Faz 2 — QUIC/H3 Transport)  
+**Version:** 1.9 (Faz 2 — JA3/JA4 Fingerprint Normalization)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -26,7 +26,8 @@
 16. [Salamander UDP Obfuscation](#16-salamander-udp-obfuscation)
 17. [Probe Defense](#17-probe-defense)
 18. [QUIC/H3 Transport](#18-quich3-transport)
-19. [Changelog](#changelog)
+19. [JA3/JA4 Fingerprint Normalization](#19-ja3ja4-fingerprint-normalization)
+20. [Changelog](#changelog)
 
 ---
 
@@ -1098,3 +1099,131 @@ nabu-relay --serve-quic                  # enable QUIC relay (UDP)
 | HOL blocking | None (QUIC stream multiplexing) |
 | DPI fingerprint | Indistinguishable from HTTP/3 traffic |
 | Active probing | ProbeDefense decoy (optional) |
+
+---
+
+## §19 JA3/JA4 Fingerprint Normalization
+
+### Motivation
+
+Deep Packet Inspection (DPI) engines can identify NABU/custom TLS clients by
+their TLS ClientHello fingerprint (JA3 hash), which encodes cipher suites,
+extensions, elliptic curves and point formats.  To evade this, NABU clients
+impersonate well-known browsers by adopting their exact TLS handshake profile
+via the [uTLS](https://github.com/refraction-networking/utls) library.
+
+### JA3 Algorithm
+
+JA3 produces a 32-character MD5 digest of the following fields extracted from
+the TLS ClientHello, with all GREASE values (RFC 8701) excluded:
+
+```
+MD5( TLSVersion , CipherSuites , ExtensionIDs , NamedGroups , PointFormats )
+```
+
+Fields are dash-separated within each group and comma-separated between groups.
+
+**GREASE detection** (RFC 8701):
+
+```go
+func isGREASEValue(v uint16) bool {
+    return (v&0x0f0f == 0x0a0a) && (v>>8 == v&0xff)
+}
+// e.g. 0x0a0a, 0x1a1a, … 0xfafa → excluded
+// 0x11ec (X25519MLKEM768) → NOT GREASE; included
+```
+
+### Browser Profiles
+
+| Profile | uTLS ID | JA3 Hash | Cipher String Deterministic? | Hash Deterministic? |
+|---------|---------|----------|------------------------------|---------------------|
+| Chrome 133 | `HelloChrome_133` | varies | ✅ | ❌ (ShuffleChromeTLSExtensions) |
+| Firefox 120 | `HelloFirefox_120` | `7fbdc1beb9b27dfb24f94e3a7f2112af` | ✅ | ✅ |
+| Edge 85 | `HelloEdge_85` | varies | ✅ | ❌ |
+| Random | `HelloRandomized` | N/A | ❌ | ❌ |
+
+> **Chrome Extension Shuffle**: `HelloChrome_133` calls `ShuffleChromeTLSExtensions()`
+> internally (uTLS mimics Chrome's anti-fingerprinting randomization).  The
+> cipher suite ordering remains fixed, so `ComputeJA3CipherString` is always
+> deterministic for Chrome; the full JA3 hash is not.
+
+### Validated Cipher Strings
+
+```
+Chrome 133:  4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53
+Firefox 120: 4865-4867-4866-49195-49199-52393-52392-49196-49200-49162-49161-49171-49172-156-157-47-53
+```
+
+### API Reference
+
+```go
+// pkg/obfuscation/ja3_normalizer.go
+
+type Profile int
+
+const (
+    ProfileChrome  Profile = iota // Chrome 133 (HelloChrome_133)
+    ProfileFirefox                // Firefox 120 (HelloFirefox_120)
+    ProfileEdge                   // Edge 85 (HelloEdge_85)
+    ProfileRandom                 // HelloRandomized
+)
+
+// ComputeJA3String returns the full JA3 string for a ClientHelloSpec,
+// excluding GREASE values.
+func ComputeJA3String(spec *utls.ClientHelloSpec) string
+
+// ComputeJA3CipherString returns only the cipher-suite field of the JA3
+// string.  Always deterministic even for Chrome (only extensions are shuffled).
+func ComputeJA3CipherString(spec *utls.ClientHelloSpec) string
+
+// ComputeJA3Hash returns MD5(ComputeJA3String(spec)) as a hex string.
+func ComputeJA3Hash(spec *utls.ClientHelloSpec) string
+
+// GetProfileSpec returns the ClientHelloSpec for the given Profile.
+// Calls utls.UTLSIdToSpec internally.
+func GetProfileSpec(p Profile) (*utls.ClientHelloSpec, error)
+
+// ValidateProfileJA3 checks the computed JA3 hash against the expected value
+// in ExpectedJA3Hash.  Returns nil if no expected hash is registered (e.g.
+// Chrome, Random) or if the hashes match.
+func ValidateProfileJA3(p Profile) error
+
+// UTLSDialNormalized opens a TLS connection to addr using the given Profile
+// and timeout.  Returns the raw net.Conn after TLS handshake.
+func UTLSDialNormalized(addr string, cfg *utls.Config, profile Profile, dialTimeout time.Duration) (net.Conn, error)
+
+// ProfileFromName converts a string name ("chrome","firefox","edge","random")
+// to Profile.
+func ProfileFromName(name string) (Profile, error)
+
+// ProfileName returns the canonical name for a Profile.
+func ProfileName(p Profile) string
+```
+
+### Security Properties
+
+| Property | Value |
+|---|---|
+| TLS version | 1.3 (enforced by browser profile) |
+| Cipher suites | Browser-identical (no custom suites) |
+| Extension order | Browser-identical for Firefox/Edge; randomized for Chrome (matches real Chrome behavior) |
+| JA3 fingerprint | Matches target browser profile |
+| GREASE support | Full RFC 8701 GREASE injection (excluded from JA3 hash) |
+| DPI evasion | ClientHello indistinguishable from real browser traffic |
+
+---
+
+## Changelog
+
+| Version | Oturum | Changes |
+|---------|--------|---------|
+| 1.0 | 1.01–1.10 | Core frame format, session lifecycle, encryption (AES-256-GCM), anti-replay |
+| 1.1 | 1.11 | TCP transport, HTTPConnect obfuscation layer |
+| 1.2 | 1.12 | TLS wrapping with self-signed cert |
+| 1.3 | 1.13 | Anti-replay window (ReplayWindow) |
+| 1.4 | 1.14 | Rate limiting |
+| 1.5 | 1.15 | WebSocket obfuscation layer (§15) |
+| 1.6 | 1.16 | §16 Salamander UDP obfuscation |
+| 1.7 | 1.17 | §17 Probe Defense (decoy TLS/HTTP response) |
+| 1.8 | 1.29 | §18 QUIC/H3 Transport (quic-go v0.59, ALPN nabu/1+h3) |
+| 1.9 | 1.30 | §19 JA3/JA4 Fingerprint Normalization (uTLS Chrome133/Firefox120/Edge85/Random profiles) |
