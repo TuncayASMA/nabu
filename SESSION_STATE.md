@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.31 (Tamamlandı — commit 40855f0)
+Oturum: 1.32 (Tamamlandı — commit 77be14a)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -18,24 +18,41 @@ Oturum: 1.31 (Tamamlandı — commit 40855f0)
   - ✅ QUIC/H3 transport — QUICServer + QUICLayer (Oturum 1.29)
   - ✅ JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
   - ✅ Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
-  - 🔜 DPI İstatistiksel Testler — KS-test, nDPI, Suricata (Oturum 1.32)
-- Oturum: 1.31 → Sonraki: 1.32
+  - ✅ Governor Adaptif Hız Kontrolcüsü (Oturum 1.32)
+  - 🔜 Phantom DPI İstatistiksel Testler — KS-test, nDPI, Suricata (Oturum 1.33)
+- Oturum: 1.32 → Sonraki: 1.33
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.32 — DPI İstatistiksel Testler (Sprint 11):
-1. pkg/phantom/dpitest/ — KS-testi ile CDF uyum doğrulama
-   - KolmogorovSmirnov(observed []float64, profile *TrafficProfile) float64
-   - sample N paket şekillendiriciden, gerçek dağılıma uyum testi
-2. nDPI entegrasyon testi (Docker veya libpcap) — phantom trafiğini nDPI'a
-   besleme, sınıflandırma sonuçlarını doğrula (UNKNOWN veya hedef protokol)
-3. Suricata kural testi — phantom trafiğine karşı varsayılan ET kuralları
-4. PROTOCOL.md v2.1: §21 DPI Test Framework
-5. pkg/governor/ ilk versiyon (isteğe bağlı bu otirumda):
-   - /proc/net/dev metrikleri okuma
-   - throughput hesaplama
-   - zaman dilimi katsayısı (gece/gündüz oranı)
+Oturum 1.33 — Phantom DPI İstatistiksel Testler (Sprint 12.3-13.2):
+1. test/dpi/phantom_test.go — KS-testi ile Phantom dağılım uyumu
+   - Shaper'dan N paket örnekle (in-memory pipe + fake conn)
+   - KolmogorovSmirnov(observed, ref CDF) → p-value > 0.05 asserted
+   - web_browsing + youtube_sd + instagram_feed her birini test et
+2. pkg/phantom/stat/ — KS-testi implementasyonu (saf Go, dış bağımlılık yok)
+   - KSDist(n int) float64: kritik değer tablosu
+   - KSTest(sample []float64, cdf []float64) (stat float64, pValue float64)
+3. İlk entropi testi: Shannon < 7.2 (HTTPS benzeri ciphertext)
+4. PROTOCOL.md v2.2: §22 DPI Test Framework
+5. nDPI / Suricata Docker testi (opsiyonel bu oturumda, önce KS-testi)
 ```
+
+## Oturum 1.32 Özeti
+- pkg/governor/governor.go: Adaptif hız kontrolcüsü
+  * ReadProcNetDev(path): /proc/net/dev çok arayüz ayrıştırıcı
+  * TimeOfDayCoeff(t): kosinus eğrisi, peak 20:00, floor 0.30 (tıkanan=0.30)
+    Formül: raw = 0.5*(1 - cos(2π*(h-8)/24)); clamp(raw, 0.30, 1.00)
+  * ComputeThroughput(a,b Snapshot): bayt/s hesaplama, sayaç sarma güvenli
+  * Governor.Run(ctx): her PollInterval (=2s) /proc okur, Recommendation kanalına gönderir
+  * Governor.LastRecommendation(): son öneriyi thread-safe döndürür
+  * NowFunc enjekte edilebilir — deterministik testler için
+- pkg/governor/governor_test.go: 13 test, -race geçti
+  * TODCoeff: peak/trough/range/midnight
+  * ReadProcNetDev: alanlar/loopback/hatalı-yol
+  * ComputeThroughput: temel/sıfır-dt/sayaç-sarma
+  * Governor.Run: öneri-üretir/temiz-iptal/LastRecommendation
+- docs/PROTOCOL.md: v2.1 — §21 Governor, Changelog 2.1 eklendi
+- gofmt + golangci-lint: temiz
 
 ## Oturum 1.31 Özeti
 - pkg/phantom/profiles/profile.go: TrafficProfile struct, 20-nokta CDF örnekleme
