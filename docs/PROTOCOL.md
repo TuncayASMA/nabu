@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 2.5 (Faz 2 — Relay Network Architecture)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network operational  
+**Version:** 2.6 (Faz 2 — Terraform Relay Provisioning)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -33,7 +33,8 @@
 23. [nDPI + Suricata Integration Tests](#23-ndpi--suricata-integration-tests)
 24. [Multipath QUIC Scheduler](#24-multipath-quic-scheduler)
 25. [Relay Network Architecture](#25-relay-network-architecture)
-26. [Changelog](#changelog)
+26. [Terraform Relay Provisioning](#26-terraform-relay-provisioning)
+27. [Changelog](#changelog)
 
 ---
 
@@ -1727,6 +1728,89 @@ Three services on bridge network `nabu-mp-net`:
 
 ---
 
+## 26 Terraform Relay Provisioning
+
+### 26.1 Directory Layout
+
+```
+deploy/terraform/
+├── modules/
+│   └── nabu-relay/          # cloud-agnostic relay config generator
+│       ├── main.tf            #   cloud-init user-data + nabu_config_snippet locals
+│       ├── variables.tf       #   relay_name, path_id, listen_port, nabu_secret, …
+│       └── outputs.tf         #   user_data, nabu_config_snippet, nabu_endpoint, probe_port
+├── oci/                     # OCI ARM64 Ampere A1 (Fransa/Marsilya, path-id 0)
+│   ├── main.tf            #   oci provider, VCN, subnet, security list, instance
+│   ├── variables.tf
+│   └── outputs.tf
+└── hetzner/                 # Hetzner Cloud CAX11 ARM64 (Falkenstein, path-id 1)
+    ├── main.tf            #   hcloud provider, firewall, ssh_key, server
+    ├── variables.tf
+    └── outputs.tf
+```
+
+### 26.2 nabu-relay Module
+
+The module is **cloud-agnostic** — it generates configuration artifacts only:
+
+| Output | Description |
+|--------|-------------|
+| `user_data` | cloud-init bootstrap script (install Docker, UFW rules, `docker run`) |
+| `nabu_config_snippet` | TOML `[[relays]]` block for the client `nabu.toml` |
+| `nabu_endpoint` | `host:port` string passed to `MultiPathConn` |
+| `probe_port` | `listen_port + 1000` (UDP echo probe) |
+
+The calling root module (`oci/` or `hetzner/`) creates the cloud instance and
+passes `public_ip` back to the module for output interpolation.
+
+### 26.3 OCI Instance (`oci/`)
+
+- **Shape:** `VM.Standard.A1.Flex` — 1 OCPU / 6 GB RAM (Always Free eligible)
+- **Region:** `eu-marseille-1` (Fransa / Marsilya)
+- **Path ID:** 0, **Listen port:** 7001
+- Resources provisioned: VCN, Internet Gateway, Route Table, Security List, Subnet, Instance
+- Inbound rules: TCP/22 (SSH), UDP/7001 (relay), UDP/8001 (probe)
+
+### 26.4 Hetzner Instance (`hetzner/`)
+
+- **Type:** `cax11` — 2 vCPU ARM64 / 4 GB RAM (~€4/mo)
+- **Location:** `fsn1` (Falkenstein, DE)
+- **Path ID:** 1, **Listen port:** 7002
+- Resources provisioned: SSH key, Firewall, Server
+- Inbound rules: TCP/22 (SSH), UDP/7002 (relay), UDP/8002 (probe)
+
+### 26.5 Security Notes
+
+- All secrets (`nabu_secret`, `hcloud_token`, OCI credentials) are `sensitive = true`.
+- **Never** place secrets in `.tf` files. Use `TF_VAR_*` env vars or a Vault-backed backend.
+- `user_data` output is marked `sensitive = true` (contains nabu_secret).
+- `ignore_changes = [user_data]` prevents re-provisioning on bootstrap script edits.
+
+### 26.6 Usage
+
+```bash
+# Hetzner relay
+cd deploy/terraform/hetzner
+terraform init
+export TF_VAR_hcloud_token="$HCLOUD_TOKEN"
+export TF_VAR_ssh_public_key="$(cat ~/.ssh/id_ed25519.pub)"
+export TF_VAR_nabu_secret="$NABU_SECRET"
+terraform apply
+
+# OCI relay
+cd deploy/terraform/oci
+terraform init
+export TF_VAR_tenancy_ocid="..." TF_VAR_user_ocid="..." \
+       TF_VAR_fingerprint="..." TF_VAR_compartment_ocid="..."
+export TF_VAR_ssh_public_key="$(cat ~/.ssh/id_ed25519.pub)"
+export TF_VAR_nabu_secret="$NABU_SECRET"
+terraform apply
+```
+
+After apply, copy `nabu_config_snippet` outputs into the client `nabu.toml` `[[relays]]` section.
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1747,3 +1831,4 @@ Three services on bridge network `nabu-mp-net`:
 | 2.3 | 1.34 | §23 nDPI + Suricata Docker integration tests (ndpiReader v4.2 TLS classification, Suricata 8.0.4 zero-alert assertion, 4 new tests; pure-Go PCAP writer) |
 | 2.4 | 1.35 | §24 Multipath QUIC Scheduler (MinRTT+EWMA, BLEST HoL-blocking, Redundant, WeightedRR; 19 unit tests) |
 | 2.5 | 1.36 | §25 Relay Network Architecture (MultiPathConn UDP echo probe, relay-network.yml OCI FR + Hetzner DE topology, 13 tests) |
+| 2.6 | 1.37 | §26 Terraform Relay Provisioning (nabu-relay module, OCI ARM64 Ampere A1 + Hetzner CAX11 ARM64, cloud-init bootstrap, sensitive secret handling) |
