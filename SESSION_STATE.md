@@ -3,11 +3,11 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.30 (Tamamlandı — commit dbb7ce3)
+Oturum: 1.31 (Tamamlandı — commit 40855f0)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
-- Sprint: 8-9 — QUIC/HTTP3 Maskeleme
+- Sprint: 10-13 — Micro-Phantom + DPI Test + Governor
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
   - ✅ Anti-replay window + client TLS dialer (Oturum 1.24)
@@ -17,22 +17,44 @@ Oturum: 1.30 (Tamamlandı — commit dbb7ce3)
   - ✅ Probe defense + aktif prob savunması (Oturum 1.28)
   - ✅ QUIC/H3 transport — QUICServer + QUICLayer (Oturum 1.29)
   - ✅ JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
-  - 🔜 Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
-- Oturum: 1.30 → Sonraki: 1.31
+  - ✅ Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
+  - 🔜 DPI İstatistiksel Testler — KS-test, nDPI, Suricata (Oturum 1.32)
+- Oturum: 1.31 → Sonraki: 1.32
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.31 — Micro-Phantom Trafik Profil Motoru (Sprint 10):
-1. pkg/phantom/profiles/ dizini oluştur
-   - web_browsing.json: web browse trafik profili
-   - youtube_sd.json: YouTube SD stream profili
-   - instagram_feed.json: Instagram feed profili
-2. pkg/phantom/shaper/shaper.go: Token bucket tabanlı trafik şekillendirici
-   - TrafficProfile struct: PacketSizeDist, IATDist, BurstPattern, SessionDuration
-   - Shape(conn net.Conn) — trafik şekillendir, profil davranışını yansıt
-3. Unit testler: Profil yükleme, token bucket, şekillendirici
-4. PROTOCOL.md v2.0: §20 Micro-Phantom Traffic Profile Engine
+Oturum 1.32 — DPI İstatistiksel Testler (Sprint 11):
+1. pkg/phantom/dpitest/ — KS-testi ile CDF uyum doğrulama
+   - KolmogorovSmirnov(observed []float64, profile *TrafficProfile) float64
+   - sample N paket şekillendiriciden, gerçek dağılıma uyum testi
+2. nDPI entegrasyon testi (Docker veya libpcap) — phantom trafiğini nDPI'a
+   besleme, sınıflandırma sonuçlarını doğrula (UNKNOWN veya hedef protokol)
+3. Suricata kural testi — phantom trafiğine karşı varsayılan ET kuralları
+4. PROTOCOL.md v2.1: §21 DPI Test Framework
+5. pkg/governor/ ilk versiyon (isteğe bağlı bu otirumda):
+   - /proc/net/dev metrikleri okuma
+   - throughput hesaplama
+   - zaman dilimi katsayısı (gece/gündüz oranı)
 ```
+
+## Oturum 1.31 Özeti
+- pkg/phantom/profiles/profile.go: TrafficProfile struct, 20-nokta CDF örnekleme
+  * sampleCDF(): ters dönüşüm örnekleme, u~Uniform(0,1)
+  * Validate(): monotonluk, uzunluk, terminal=1.0 kontrolleri
+  * SamplePacketSize/SampleIATMs, LoadFromFile/LoadEmbedded/EmbeddedNames
+- pkg/phantom/profiles/embedded.go: 3 gömülü profil
+  * web_browsing: bimodal paket boyutu (40B ACK + 1400B veri), 30-60ms IAT
+  * youtube_sd: büyük paketler (streaming), 10-30ms IAT, uzun burst
+  * instagram_feed: karma (API + medya), 100-200ms IAT (insan ritmi)
+- pkg/phantom/profiles/{web,youtube,instagram}.json: JSON serileştirmeleri
+- pkg/phantom/shaper/shaper.go: net.Conn sarmalayıcı
+  * tokenBucket: özel hız sınırlayıcı (dış bağımlılık yok)
+  * Write(): profil boyutlu segmentlere bölme + IAT gecikmeleri
+  * GenerateIdle(ctx, duration): sentetik kapak trafiği üretimi
+  * SetProfile(): sıcak profil değiştirme (runtime)
+- Test: 14 profil + 13 shaper testi, hepsi -race ile geçti
+- docs/PROTOCOL.md: v2.0 — §20 Micro-Phantom Traffic Profile Engine, Changelog 2.0 eklendi
+- gofmt + golangci-lint: temiz
 
 ## Oturum 1.30 Özeti
 - pkg/obfuscation/ja3_normalizer.go: JA3/JA4 TLS parmak izi normalizasyonu
