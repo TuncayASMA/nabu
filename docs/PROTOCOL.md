@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 1.7 (Faz 2 — Probe Defense + Decoy HTTP + IP Ban)  
+**Version:** 1.8 (Faz 2 — QUIC/H3 Transport)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -25,7 +25,8 @@
 15. [Security Considerations](#security-considerations)
 16. [Salamander UDP Obfuscation](#16-salamander-udp-obfuscation)
 17. [Probe Defense](#17-probe-defense)
-18. [Changelog](#changelog)
+18. [QUIC/H3 Transport](#18-quich3-transport)
+19. [Changelog](#changelog)
 
 ---
 
@@ -709,6 +710,7 @@ observability without locks.
 | 1.5     | 1.25   | Added §15 WebSocket Obfuscation (`WebSocketLayer`, RFC 6455 binary-frame tunnelling); `TCPServer.AcceptWebSocket`; `ModeWebSocket` factory; `--serve-ws`/`--ws-addr`/`--ws-tls`/`--ws-cert`/`--ws-key` flags in `nabu-relay`; WSS (WebSocket over TLS) support |
 | 1.6     | 1.27   | Added §16 Salamander UDP Obfuscation (`SalamanderEncode`/`SalamanderDecode` in `pkg/crypto`); `UDPClient.SalamanderPSK`; `UDPServer.SalamanderPSK`; `NewRelayHandlerUDPSalamander`; `--salamander-psk` flags in `nabu-client` and `nabu-relay`; fixed `MeasureRTT` Salamander bypass |
 | 1.7     | 1.28   | Added §17 Probe Defense (`ProbeDefense` struct in `pkg/relay`); HTTP method sniffing at connection start; decoy HTML server (fake blog); IP-level ban tracker with sliding window; `TCPServer.ProbeDefense` field; `--probe-defense` flag in `nabu-relay` |
+| 1.8     | 1.29   | Added §18 QUIC/H3 Transport (`QUICServer` in `pkg/relay`, `QUICLayer` in `pkg/obfuscation`); NABU frames over QUIC streams (length-prefix framing); multi-stream multiplexing; `--serve-quic`/`--quic-addr`/`--quic-cert`/`--quic-key` flags in `nabu-relay`; `quic-go v0.59.0` dependency |
 
 ---
 
@@ -975,3 +977,124 @@ nabu-relay --probe-defense   # enable ProbeDefense on TCP (and WS if --serve-ws)
 - Decrypt errors and replay-window violations do **not** currently trigger
   `HandleProbe`.  This is intentional: those are NABU-aware attacks and the
   silent close is more revealing than a decoy response.
+
+---
+
+## §18 QUIC/H3 Transport
+
+QUIC transport enables NABU frames to be carried over QUIC streams, making
+relay traffic indistinguishable from HTTP/3 application traffic.
+
+### Motivation
+
+TCP-based transports (TCPServer, HTTPConnect, WebSocket) are susceptible to
+TCP-reset injection by firewalls.  QUIC runs over UDP, making TCP-level
+interference impossible.  Additionally, QUIC's 0-RTT connection establishment
+and built-in TLS 1.3 make it faster and more resistant to TLS fingerprinting.
+
+NABU frames are carried inside QUIC bidirectional streams (one QUIC stream per
+logical relay session).  Multiple sessions share a single QUIC connection,
+reducing handshake overhead and improving multiplexing.
+
+### Wire Protocol
+
+Each QUIC stream carries NABU frames using the same 4-byte length-prefix
+framing as TCPServer:
+
+```
+┌──────────────────┬───────────────────────────┐
+│  Length (4 B BE) │  NABU Frame (N bytes)     │
+└──────────────────┴───────────────────────────┘
+```
+
+### Session Lifecycle
+
+```
+Client                                     QUICServer
+  │                                             │
+  │  QUIC CONNECT (UDP + TLS 1.3 handshake)     │
+  │──────────────────────────────────────────►  │
+  │                                             │
+  │  OpenStream()                               │
+  │──────────────────────────────────────────►  │
+  │                                             │
+  │  FlagConnect (payload = "host:port")        │
+  │──────────────────────────────────────────►  │
+  │                              dial target    │
+  │  FlagACK                                    │
+  │◄──────────────────────────────────────────  │
+  │                                             │
+  │  FlagData          target TCP               │
+  │──────────────────────────────────────────►  │──► write
+  │                               read ◄──────  │
+  │  FlagData (echo)                            │
+  │◄──────────────────────────────────────────  │
+  │                                             │
+  │  FlagFIN                                    │
+  │──────────────────────────────────────────►  │
+  │             FlagFIN (from target EOF)       │
+  │◄──────────────────────────────────────────  │
+```
+
+### ALPN
+
+The TLS ALPN value `"nabu/1"` is advertised alongside `"h3"` so that passive
+DPI sees a standard HTTP/3 endpoint.  A client without the PSK receives a
+decoy response (if ProbeDefense is enabled) and cannot distinguish the relay
+from an ordinary web server.
+
+### Multiplexing
+
+Multiple logical NABU sessions are multiplexed over a single QUIC connection
+without head-of-line blocking (unlike TCP).  Each call to `QUICLayer.Connect()`
+opens a new bidirectional QUIC stream on the shared `*quic.Conn`.
+
+### API
+
+```go
+// pkg/relay/quic_server.go
+const quicALPN = "nabu/1"
+
+func NewQUICServer(listenAddr string, tlsConf *tls.Config, logger *slog.Logger) (*QUICServer, error)
+func (s *QUICServer) Start(ctx context.Context) error
+
+type QUICServer struct {
+    ListenAddr          string
+    TLSConfig           *tls.Config
+    AllowPrivateTargets bool
+    PSK                 []byte
+    ProbeDefense        *ProbeDefense
+    Stats               GlobalStats
+}
+
+// pkg/obfuscation/quic_layer.go
+func NewQUICLayer(relayAddr string, tlsConf *tls.Config) *QUICLayer
+func (q *QUICLayer) Connect() (net.Conn, error)
+func (q *QUICLayer) SendFrame(f transport.Frame) error
+func (q *QUICLayer) ReceiveFrame() (transport.Frame, error)
+func (q *QUICLayer) Close() error
+```
+
+### CLI Flags
+
+```
+nabu-relay --serve-quic                  # enable QUIC relay (UDP)
+           --quic-addr :4433             # listen address (default :4433)
+           --quic-cert path.pem          # TLS cert; omit for self-signed
+           --quic-key  path.key          # TLS key;  omit for self-signed
+           --probe-defense               # also applies to QUIC streams
+           --psk <key>                   # AES-256-GCM session key
+```
+
+### Security Properties
+
+| Property | Value |
+|---|---|
+| TLS version | 1.3 (enforced) |
+| ALPN | `"nabu/1"`, `"h3"` |
+| Connection encryption | QUIC built-in (AES-128-GCM or ChaCha20-Poly1305) |
+| Frame encryption | AES-256-GCM (optional PSK, same as TCPServer) |
+| Replay protection | `ReplayWindow` per-stream |
+| HOL blocking | None (QUIC stream multiplexing) |
+| DPI fingerprint | Indistinguishable from HTTP/3 traffic |
+| Active probing | ProbeDefense decoy (optional) |

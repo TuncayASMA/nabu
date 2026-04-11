@@ -39,6 +39,10 @@ func main() {
 	psk := flag.String("psk", "", "Pre-shared key (sifreleme): bosssa sifreleme devre disi")
 	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'si (client ile aynı olmalı; sadece UDP modunda geçerli)")
 	probeDefense := flag.Bool("probe-defense", false, "Aktif prob savunması: kimliği doğrulanmamış TCP bağlantılara sahte HTTP yanıtı döndür")
+	serveQUIC := flag.Bool("serve-quic", false, "QUIC/H3 relay listener başlat (UDP tabanlı, TLS 1.3 zorunlu)")
+	quicAddr := flag.String("quic-addr", ":4433", "QUIC relay dinleme adresi (serve-quic=true ise kullanılır)")
+	quicCert := flag.String("quic-cert", "", "QUIC TLS sertifika dosyası (PEM); boşsa self-signed otomatik üretilir")
+	quicKey := flag.String("quic-key", "", "QUIC TLS anahtar dosyası (PEM); boşsa self-signed otomatik üretilir")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	statsAddr := flag.String("stats-addr", "", "HTTP stats endpoint adresi (örn: :9091); bosssa devre disi")
 	flag.Parse()
@@ -203,6 +207,35 @@ func main() {
 		go func() {
 			if err := wsServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("ws relay hatasi", slog.Any("err", err))
+			}
+		}()
+	}
+
+	// QUIC/H3 relay (NABU frames over QUIC streams).
+	if *serveQUIC {
+		tlsCfg, err := relay.BuildTLSConfig(*quicCert, *quicKey)
+		if err != nil {
+			log.Error("QUIC TLS konfigürasyonu olusturulamadi", slog.Any("err", err))
+			os.Exit(1)
+		}
+		quicServer, err := relay.NewQUICServer(*quicAddr, tlsCfg, log)
+		if err != nil {
+			log.Error("quic relay olusturulamadi", slog.Any("err", err))
+			os.Exit(1)
+		}
+		if *psk != "" {
+			quicServer.PSK = []byte(*psk)
+		}
+		if *probeDefense {
+			quicServer.ProbeDefense = relay.NewProbeDefense()
+			log.Info("prob savunması etkin (QUIC relay)")
+		}
+		log.Info("QUIC relay başlıyor",
+			slog.String("addr", *quicAddr),
+		)
+		go func() {
+			if err := quicServer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("quic relay hatasi", slog.Any("err", err))
 			}
 		}()
 	}
