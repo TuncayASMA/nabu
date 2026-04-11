@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.0 (Faz 2 — Micro-Phantom Traffic Profile Engine)  
+**Version:** 2.1 (Faz 2 — Governor Adaptive Rate Controller)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -28,7 +28,8 @@
 18. [QUIC/H3 Transport](#18-quich3-transport)
 19. [JA3/JA4 Fingerprint Normalization](#19-ja3ja4-fingerprint-normalization)
 20. [Micro-Phantom Traffic Profile Engine](#20-micro-phantom-traffic-profile-engine)
-21. [Changelog](#changelog)
+21. [Governor Adaptive Rate Controller](#21-governor-adaptive-rate-controller)
+22. [Changelog](#changelog)
 
 ---
 
@@ -1344,6 +1345,100 @@ func (s *Shaper) Profile() *TrafficProfile
 
 ---
 
+## §21 Governor Adaptive Rate Controller
+
+### Motivation
+
+Even a perfectly obfuscated tunnel becomes detectable if its bandwidth is
+constant at all hours: real CDN-delivered traffic has a strong diurnal rhythm
+(low at 08:00, peaking around 20:00 in the evening prime-time).  The Governor
+matches this rhythm by scaling the tunnel's target bandwidth with a
+time-of-day coefficient, making NABU's per-connection rate statistically
+indistinguishable from background internet traffic on the same interface.
+
+### Time-of-Day Coefficient
+
+The coefficient `c(h) ∈ [0.30, 1.00]` is a truncated cosine:
+
+```
+raw(h) = 0.5 × (1 − cos(2π × (h − 8) / 24))    h ∈ [0, 24)
+c(h)   = clamp(raw(h), 0.30, 1.00)
+```
+
+Key values:
+
+| Hour | raw | c(h) | Description |
+|------|-----|------|-------------|
+| 08:00 | 0.00 | 0.30 | Morning trough (clamped floor) |
+| 12:00 | 0.50 | 0.50 | Midday |
+| 20:00 | 1.00 | 1.00 | Prime-time peak |
+| 00:00 | ~0.75 | 0.75 | Late night — still active |
+
+### Architecture (Faz 2 — non-eBPF)
+
+```
+/proc/net/dev  ──►  ReadProcNetDev()  ──►  Snapshot
+                                              │
+                              ComputeThroughput(prev, cur)
+                                              │
+                                    c(h) = TimeOfDayCoeff(now)
+                                              │
+                              TargetBytesS = MaxBandwidthBps × c(h)
+                                              │
+                              Recommendation ──► channel ──► Shaper
+```
+
+The `Governor` struct wraps this loop: it spawns a goroutine that reads
+`/proc/net/dev` every `PollInterval` (default 2 s), computes interface
+throughput, applies the TOD coefficient, and emits a `Recommendation` on
+a buffered channel.  The associated `Shaper` (§20) reads this channel and
+adjusts its token-bucket rate accordingly.
+
+The `NowFunc` field enables deterministic testing without wall-clock
+dependency.
+
+### Go API Reference
+
+```go
+// pkg/governor
+
+// TimeOfDayCoeff returns c(h) ∈ [0.30, 1.00] for the given time.
+func TimeOfDayCoeff(t time.Time) float64
+
+// ReadProcNetDev parses /proc/net/dev and returns per-interface counters.
+func ReadProcNetDev(path string) (map[string]InterfaceStats, error)
+
+// ComputeThroughput computes bytes/s between two Snapshots.
+func ComputeThroughput(a, b Snapshot) []ThroughputBps
+
+// Governor watches /proc/net/dev and emits adaptive Recommendations.
+type Governor struct { /* ... */ }
+
+func New(cfg Config) *Governor
+func (g *Governor) Run(ctx context.Context) <-chan Recommendation
+func (g *Governor) LastRecommendation() *Recommendation
+
+type Recommendation struct {
+    TargetBytesS     float64   // suggested bandwidth (bytes/s)
+    TODCoeff         float64   // time-of-day multiplier applied
+    ObservedRxBytesS float64   // interface receive throughput
+    ObservedTxBytesS float64   // interface transmit throughput
+    At               time.Time // computation timestamp
+}
+```
+
+### Security Properties
+
+| Property | Value |
+|---|---|
+| Rate scaling | Time-of-day cosine, peak at 20:00 |
+| Floor | 0.30 × MaxBandwidthBps (avoids hard cutoffs) |
+| Counter wrap | Treated as 0 bytes/s (conservative) |
+| eBPF upgrade path | Faz 3 Sprint 17–18 (kernel hook for exact flow accounting) |
+| /proc access | Read-only, unprivileged |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1359,3 +1454,4 @@ func (s *Shaper) Profile() *TrafficProfile
 | 1.8 | 1.29 | §18 QUIC/H3 Transport (quic-go v0.59, ALPN nabu/1+h3) |
 | 1.9 | 1.30 | §19 JA3/JA4 Fingerprint Normalization (uTLS Chrome133/Firefox120/Edge85/Random profiles) |
 | 2.0 | 1.31 | §20 Micro-Phantom Traffic Profile Engine (web_browsing/youtube_sd/instagram_feed CDF profiles, token-bucket shaper, GenerateIdle cover traffic) |
+| 2.1 | 1.32 | §21 Governor Adaptive Rate Controller (/proc/net/dev, TimeOfDayCoeff cosine curve, Recommendation channel, non-eBPF Faz-2 version) |
