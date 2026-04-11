@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.7 (Faz 2 — eBPF Governor)  
+**Version:** 2.8 (Faz 2 — Governor Karar Motoru)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -35,7 +35,8 @@
 25. [Relay Network Architecture](#25-relay-network-architecture)
 26. [Terraform Relay Provisioning](#26-terraform-relay-provisioning)
 27. [eBPF Governor](#27-ebpf-governor)
-28. [Changelog](#changelog)
+28. [Governor Decision Engine](#28-governor-decision-engine)
+29. [Changelog](#changelog)
 
 ---
 
@@ -1875,6 +1876,76 @@ go generate ./pkg/governor/ebpf/
 
 ---
 
+## 28 Governor Decision Engine
+
+### 28.1 Architecture
+
+The Decision Engine sits on top of the proc/net/dev Governor and the eBPF
+Monitor to produce 100 ms adaptive control outputs for the NABU pipeline.
+
+```
+  proc/net/dev Governor  ──┐
+                           ├─→ DecisionEngine (100 ms loop) ──→ Decision{}
+  eBPF Monitor (IAT)     ──┘
+```
+
+### 28.2 Decision Outputs
+
+| Field | Range | Meaning |
+|-------|-------|---------|
+| `PhantomRate` | `[0, MaxPhantomBytesS]` | Phantom traffic injection rate (bytes/s) |
+| `SchedulerBias` | `[-1, +1]` | Multipath scheduler weight bias (+ = prefer fast) |
+| `FECRatio` | `[0, 1]` | FEC redundancy ratio (0.05 baseline, 0.25 on IAT spike) |
+| `BurstMode` | `bool` | True when utilEWMA < 30% and no IAT spike detected |
+| `TODCoeff` | `[0.30, 1.00]` | Time-of-day multiplier from §21 |
+| `UtilFraction` | `[0, 1]` | EWMA-smoothed link utilisation |
+
+### 28.3 IAT Spike Detection
+
+When an `EBPFSnapshot` provider is supplied, the engine tracks per-tick
+packet deltas to estimate the current inter-arrival time:
+
+$$\text{IAT}_{\text{ns}} = \frac{\Delta t_{\text{ns}}}{\Delta \text{pkts}}$$
+
+An EWMA (\(\alpha = 0.1\)) smooths the series.  A spike is declared when:
+
+$$\text{IAT}_{\text{current}} > \text{IATSpikeThreshold} \times \text{EWMA}$$
+
+Default `IATSpikeThreshold = 3.0`.  On a spike:
+- `FECRatio` → 0.25 (boost)
+- `PhantomRate` → 25% of normal (reduce synthetic traffic)
+
+### 28.4 Implementation (`pkg/governor/decision.go`)
+
+| Type | Purpose |
+|------|---------|
+| `EBPFSnapshot` | eBPF counter snapshot struct |
+| `SnapshotProvider` | Interface satisfied by `ebpf.Monitor` |
+| `Decision` | Output struct (all four outputs + metadata) |
+| `EngineConfig` | Configuration (tick interval, MaxPhantomBytesS, spike threshold) |
+| `DecisionEngine` | Main engine: `Run(ctx)`, `LastDecision()`, `IATEWMANs()` |
+
+### 28.5 Test Summary (14 tests, all PASS with `-race`)
+
+| Test | Assertion |
+|------|-----------|
+| `TestDecisionEngine_NewEngine` | Engine creation succeeds |
+| `TestDecisionEngine_LastDecisionNilBeforeRun` | nil before first tick |
+| `TestDecisionEngine_RunEmitsDecision` | channel receives Decision |
+| `TestDecisionEngine_PhantomRateRange` | PhantomRate in [0, 512KiB/s] |
+| `TestDecisionEngine_FECRatioRange` | FECRatio in [0, 1] |
+| `TestDecisionEngine_SchedulerBiasRange` | SchedulerBias in [-1, 1] |
+| `TestDecisionEngine_TODCoeffPositive` | TODCoeff > 0 |
+| `TestDecisionEngine_UtilFractionRange` | UtilFraction in [0, 1] |
+| `TestDecisionEngine_LastDecisionUpdated` | LastDecision non-nil after tick |
+| `TestDecisionEngine_ChannelClosedAfterCancel` | channel closed on cancel |
+| `TestDecisionEngine_WithEBPFStub` | stub provider accepted |
+| `TestDecisionEngine_IATEWMAInitialPositive` | EWMA > 0 at init |
+| `TestDecisionEngine_IATSpikeBoostsFECRatio` | FECRatio ≥ 0.20 on spike |
+| `TestDecisionEngine_BurstModeAtLowUtil` | BurstMode true at zero util |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1897,3 +1968,4 @@ go generate ./pkg/governor/ebpf/
 | 2.5 | 1.36 | §25 Relay Network Architecture (MultiPathConn UDP echo probe, relay-network.yml OCI FR + Hetzner DE topology, 13 tests) |
 | 2.6 | 1.37 | §26 Terraform Relay Provisioning (nabu-relay module, OCI ARM64 Ampere A1 + Hetzner CAX11 ARM64, cloud-init bootstrap, sensitive secret handling) |
 | 2.7 | 1.38 | §27 eBPF Governor (TC clsact hook, ring buffer IAT events, stub/real backend interface, 13 unit tests) |
+| 2.8 | 1.39 | §28 Governor Decision Engine (100ms loop, PhantomRate+SchedulerBias+FECRatio+BurstMode, IAT spike detection EWMA, SnapshotProvider interface, 14 unit tests) |
