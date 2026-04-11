@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.36 (Tamamlandı — commit bdbcbda)
+Oturum: 1.37 (Tamamlandı — commit 42f78d6)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -23,18 +23,33 @@ Oturum: 1.36 (Tamamlandı — commit bdbcbda)
   - ✅ nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
   - ✅ Multipath QUIC Scheduler — MinRTT+BLEST+Redundant+WRR (Oturum 1.35)
   - ✅ Relay Ağı Konfigürasyonu — MultiPathConn + UDP echo probe (Oturum 1.36)
-  - 🔜 Terraform Relay Provisioning — OCI ARM + Hetzner Cloud (Oturum 1.37)
-- Oturum: 1.36 → Sonraki: 1.37
+  - ✅ Terraform Relay Provisioning — OCI ARM64 + Hetzner CAX11 (Oturum 1.37)
+  - 🔜 eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
+- Oturum: 1.37 → Sonraki: 1.38
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.37 — Terraform ile Relay Provisioning (RUNBOOK §15.1-15.3):
-1. deploy/terraform/oci/ — OCI ARM instance (Fransa / İngiltere)
-2. deploy/terraform/hetzner/ — Hetzner Cloud ARM (Falkenstein)
-3. deploy/terraform/modules/nabu-relay/ — ortak relay modülü
-4. Çıktı: relay IP'leri + otomatik nabu config
-5. PROTOCOL.md v2.6: §26 Terraform Relay Provisioning
+Oturum 1.38 — eBPF Governor (Sprint 17 — RUNBOOK §17.1-17.3):
+1. pkg/governor/ebpf/monitor.c — TC hook, paket sayısı/byte/IAT, ring buffer
+2. pkg/governor/ebpf/loader.go — cilium/ebpf ile Go wrapper (objs yükle, map oku)
+3. pkg/governor/ebpf/monitor_test.go — unit testler (mock veya real eBPF)
+4. PROTOCOL.md v2.7: §27 eBPF Governor
 ```
+
+## Oturum 1.37 Özeti
+- deploy/terraform/modules/nabu-relay/: cloud-agnostic relay config modülü
+  * main.tf: cloud-init user-data + nabu_config_snippet locals
+  * variables.tf: relay_name, path_id, listen_port, nabu_secret (sensitive)
+  * outputs.tf: user_data (sensitive), nabu_config_snippet, nabu_endpoint, probe_port
+- deploy/terraform/oci/: OCI Ampere A1 Flex ARM64 (eu-marseille-1, path-id 0, port 7001)
+  * VCN + IGW + Route Table + Security List + Subnet + Instance
+  * TCP/22 + UDP/7001 + UDP/8001 (probe) — Always Free eligible
+  * Tüm credentials TF_VAR_* ile (sensitive=true, hardcode yok)
+- deploy/terraform/hetzner/: Hetzner CAX11 ARM64 (fsn1, path-id 1, port 7002)
+  * Firewall + SSH key + Server (cax11 2vCPU 4GB ~€4/mo)
+  * TCP/22 + UDP/7002 + UDP/8002 (probe)
+- docs/PROTOCOL.md: v2.5 → v2.6 — §26 Terraform Relay Provisioning
+- Full test suite: tüm PASS
 
 ## Oturum 1.36 Özeti
 - pkg/multipath/conn.go: MultiPathConn path lifecycle manager
