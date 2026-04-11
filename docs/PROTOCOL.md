@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 1.9 (Faz 2 — JA3/JA4 Fingerprint Normalization)  
+**Version:** 2.0 (Faz 2 — Micro-Phantom Traffic Profile Engine)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -27,7 +27,8 @@
 17. [Probe Defense](#17-probe-defense)
 18. [QUIC/H3 Transport](#18-quich3-transport)
 19. [JA3/JA4 Fingerprint Normalization](#19-ja3ja4-fingerprint-normalization)
-20. [Changelog](#changelog)
+20. [Micro-Phantom Traffic Profile Engine](#20-micro-phantom-traffic-profile-engine)
+21. [Changelog](#changelog)
 
 ---
 
@@ -1213,6 +1214,136 @@ func ProfileName(p Profile) string
 
 ---
 
+## §20 Micro-Phantom Traffic Profile Engine
+
+### Motivation
+
+Passive DPI (Deep Packet Inspection) systems can detect tunnels not only by
+packet content (already addressed by AES-256-GCM + TLS) but by behavioural
+features: inter-arrival times (IAT), packet-size distributions, burst patterns,
+and session durations.  The Micro-Phantom engine shapes NABU traffic to match
+statistical profiles of real, popular application traffic, making per-flow
+behaviour indistinguishable from organic CDN/OTT flows.
+
+### Built-in Profiles
+
+| Profile Name | Traffic Class | Packet Size Bias | IAT Bias | Burst (min/max pkts) | Session Mean |
+|---|---|---|---|---|---|
+| `web_browsing` | HTTP/2 browsing | bimodal (40B ACKs + 1400B data) | 30–60 ms | 3 / 15 | 60 s |
+| `youtube_sd` | DASH SD video | large frames (1000–1460 B) | 10–30 ms | 20 / 60 | 600 s |
+| `instagram_feed` | API + media scroll | mixed (100B API + 1300B media) | 100–200 ms (human pace) | 5 / 25 | 180 s |
+
+Custom profiles can be loaded from JSON files at runtime via `LoadFromFile`.
+
+### CDF Sampling Algorithm
+
+Each profile stores two 20-point Cumulative Distribution Function (CDF) arrays:
+`PacketSizeDist` (over `[0, MaxPacketBytes=1460]` bytes) and `IATDist` (over
+`[0, MaxIATMs=200]` ms).  Sampling uses inverse-transform sampling:
+
+```
+for i, v in enumerate(cdf):
+    if u <= v:
+        return round(maxVal * (i+1) / len(cdf))
+return maxVal
+```
+
+where `u ~ Uniform(0,1)`.  This produces integer values in `[1, maxVal]` with
+the distribution encoded by the CDF table.
+
+CDF validity constraints enforced by `Validate()`:
+- Length must equal `cdfPoints` (20)
+- Values must be strictly non-decreasing
+- Terminal value must equal 1.0 ± 1e-9
+- Profile name must be non-empty
+
+### Token-Bucket Rate Shaper
+
+The `Shaper` type wraps any `net.Conn` and enforces:
+
+1. **Packet sizing** — each logical write is split into segments whose sizes are
+   sampled from the profile's `PacketSizeDist`.  Segments smaller than the
+   original payload are zero-padded to the sampled size to preserve the wire
+   distribution.
+2. **Inter-arrival timing** — between consecutive segments the goroutine sleeps
+   for a duration sampled from `IATDist` (converted to nanoseconds).
+3. **Token-bucket rate limit** — an internal `tokenBucket` (capacity ≥ 2 ×
+   MaxPacketBytes) enforces a per-connection rate ceiling (default: 10 MiB/s);
+   blocking is context-aware.
+4. **Idle traffic generation** — `GenerateIdle(ctx, duration)` emits synthetic
+   zero-entropy (all-zeros) segments at the profile IAT rate, sustaining the
+   expected flow statistics between real application bursts.
+
+### Go API Reference
+
+```go
+// --- pkg/phantom/profiles ---
+
+// TrafficProfile describes the statistical fingerprint of a traffic class.
+type TrafficProfile struct {
+    Name            string
+    PacketSizeDist  []float64   // 20-point CDF over [0, MaxPacketBytes]
+    IATDist         []float64   // 20-point CDF over [0, MaxIATMs] ms
+    BurstPattern    BurstModel
+    SessionDuration Distribution
+    DNSPatterns     []string
+}
+
+// Validate returns an error if the profile is malformed.
+func (p *TrafficProfile) Validate() error
+
+// SamplePacketSize returns a packet size in [1, MaxPacketBytes].
+func (p *TrafficProfile) SamplePacketSize(rng *rand.Rand) int
+
+// SampleIATMs returns an inter-arrival time in [0, MaxIATMs] ms.
+func (p *TrafficProfile) SampleIATMs(rng *rand.Rand) float64
+
+// LoadEmbedded loads one of the built-in profiles by name.
+func LoadEmbedded(name string) (*TrafficProfile, error)
+
+// LoadFromFile loads a JSON-serialised profile from disk.
+func LoadFromFile(path string) (*TrafficProfile, error)
+
+// EmbeddedNames returns the list of built-in profile names.
+func EmbeddedNames() []string
+
+// --- pkg/phantom/shaper ---
+
+// Shaper is a net.Conn wrapper that shapes traffic to match a TrafficProfile.
+type Shaper struct { /* ... */ }
+
+// New creates a Shaper.  conn and profile must be non-nil and profile must
+// pass Validate().  Zero Options fields are filled with defaults.
+func New(conn net.Conn, profile *TrafficProfile, opts Options) (*Shaper, error)
+
+// Write splits b into profile-sized segments and emits them with profile
+// IAT delays.
+func (s *Shaper) Write(b []byte) (int, error)
+
+// GenerateIdle emits synthetic traffic for up to duration (or ctx cancel).
+func (s *Shaper) GenerateIdle(ctx context.Context, duration time.Duration) error
+
+// SetProfile hot-swaps the active traffic profile (thread-safe).
+func (s *Shaper) SetProfile(p *TrafficProfile) error
+
+// Profile returns the currently active TrafficProfile.
+func (s *Shaper) Profile() *TrafficProfile
+```
+
+### Security Properties
+
+| Property | Value |
+|---|---|
+| Payload entropy | Unchanged (AES-GCM ciphertext) |
+| Packet-size distribution | Profile CDF (DPI-resistant) |
+| IAT distribution | Profile CDF (DPI-resistant) |
+| Burst pattern | Profile BurstModel |
+| Idle cover traffic | Zero-entropy synthetic segments |
+| Rate control | Token-bucket, context-cancellable |
+| Hot profile swap | Supported (atomic pointer update) |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1227,3 +1358,4 @@ func ProfileName(p Profile) string
 | 1.7 | 1.17 | §17 Probe Defense (decoy TLS/HTTP response) |
 | 1.8 | 1.29 | §18 QUIC/H3 Transport (quic-go v0.59, ALPN nabu/1+h3) |
 | 1.9 | 1.30 | §19 JA3/JA4 Fingerprint Normalization (uTLS Chrome133/Firefox120/Edge85/Random profiles) |
+| 2.0 | 1.31 | §20 Micro-Phantom Traffic Profile Engine (web_browsing/youtube_sd/instagram_feed CDF profiles, token-bucket shaper, GenerateIdle cover traffic) |

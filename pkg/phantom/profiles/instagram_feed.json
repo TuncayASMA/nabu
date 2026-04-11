@@ -1,0 +1,64 @@
+{
+  "name": "instagram_feed",
+  "packet_size_dist": [
+    0.12,
+    0.22,
+    0.3,
+    0.36,
+    0.4,
+    0.43,
+    0.46,
+    0.49,
+    0.51,
+    0.53,
+    0.56,
+    0.59,
+    0.63,
+    0.68,
+    0.74,
+    0.81,
+    0.88,
+    0.93,
+    0.97,
+    1
+  ],
+  "iat_dist": [
+    0.04,
+    0.1,
+    0.17,
+    0.24,
+    0.31,
+    0.37,
+    0.43,
+    0.48,
+    0.52,
+    0.56,
+    0.6,
+    0.63,
+    0.67,
+    0.71,
+    0.76,
+    0.82,
+    0.88,
+    0.93,
+    0.97,
+    1
+  ],
+  "burst_pattern": {
+    "min_packets": 5,
+    "max_packets": 25,
+    "pause_mean_ms": 350,
+    "pause_std_ms": 150
+  },
+  "session_duration": {
+    "min_ms": 30000,
+    "max_ms": 900000,
+    "mean_ms": 180000,
+    "std_ms": 120000
+  },
+  "dns_patterns": [
+    "instagram.com",
+    "cdninstagram.com",
+    "fbcdn.net"
+  ]
+}
