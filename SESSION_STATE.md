@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.37 (Tamamlandı — commit 42f78d6)
+Oturum: 1.38 (Tamamlandı — commit c01485d)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -24,17 +24,37 @@ Oturum: 1.37 (Tamamlandı — commit 42f78d6)
   - ✅ Multipath QUIC Scheduler — MinRTT+BLEST+Redundant+WRR (Oturum 1.35)
   - ✅ Relay Ağı Konfigürasyonu — MultiPathConn + UDP echo probe (Oturum 1.36)
   - ✅ Terraform Relay Provisioning — OCI ARM64 + Hetzner CAX11 (Oturum 1.37)
-  - 🔜 eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
-- Oturum: 1.37 → Sonraki: 1.38
+  - ✅ eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
+  - 🔜 Governor Karar Motoru — eBPF entegrasyonu + karar döngüsü (Oturum 1.39)
+- Oturum: 1.38 → Sonraki: 1.39
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.38 — eBPF Governor (Sprint 17 — RUNBOOK §17.1-17.3):
-1. pkg/governor/ebpf/monitor.c — TC hook, paket sayısı/byte/IAT, ring buffer
-2. pkg/governor/ebpf/loader.go — cilium/ebpf ile Go wrapper (objs yükle, map oku)
-3. pkg/governor/ebpf/monitor_test.go — unit testler (mock veya real eBPF)
-4. PROTOCOL.md v2.7: §27 eBPF Governor
+Oturum 1.39 — Governor Karar Motoru (Sprint 17.4-18.2 — RUNBOOK §18):
+1. pkg/governor/governor.go: eBPF Monitor entegrasyonu
+   - NewMonitor(iface, bufSize) çağrısı
+   - 100ms karar döngüsü: eBPF Snapshot → adaptif hız hesabı
+   - Outputs: phantomRate, schedulerBias, fecRatio, burstMode
+2. pkg/governor/ebpf entegrasyon testi (gerçek iface varsa)
+3. PROTOCOL.md v2.8: §28 Governor Karar Motoru
 ```
+
+## Oturum 1.38 Özeti
+- pkg/governor/ebpf/bpf/nabu_monitor.c: TC clsact hook kernel programı
+  * BPF_MAP_TYPE_ARRAY nabu_counters[2] (ingress/egress packet+bytes)
+  * BPF_MAP_TYPE_PERCPU_ARRAY nabu_last_ts[2] (IAT hesabı)
+  * BPF_MAP_TYPE_RINGBUF nabu_events (4 MiB IAT olay akışı)
+  * nabu_event{ts_ns, iat_ns, pkt_len, direction} — her pakette push
+- pkg/governor/ebpf/monitor.go: Monitor Go wrapper
+  * monitorImpl interface: attach/readEvents/counters/close
+  * Start (idempotent, 2 goroutine), Stop (WaitGroup drain), Events, Snapshot
+  * go:generate bpf2go directive
+- pkg/governor/ebpf/impl_stub.go: no-op backend (CI/no-clang ortamı için güvenli)
+- pkg/governor/ebpf/impl_linux_real.go: gerçek bpf2go backend (//go:build ignore)
+- pkg/governor/ebpf/monitor_test.go: 13 test — tümü PASS (-race)
+- docs/PROTOCOL.md: v2.6 → v2.7 — §27 eBPF Governor
+- go.mod: github.com/cilium/ebpf v0.21.0 eklendi
+- Full test suite: tüm PASS
 
 ## Oturum 1.37 Özeti
 - deploy/terraform/modules/nabu-relay/: cloud-agnostic relay config modülü
