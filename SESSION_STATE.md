@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.35 (Tamamlandı — commit b005492)
+Oturum: 1.36 (Tamamlandı — commit bdbcbda)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -22,19 +22,36 @@ Oturum: 1.35 (Tamamlandı — commit b005492)
   - ✅ Phantom DPI İstatistiksel Testler — KS-test, BucketFrequency, Shannon (Oturum 1.33)
   - ✅ nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
   - ✅ Multipath QUIC Scheduler — MinRTT+BLEST+Redundant+WRR (Oturum 1.35)
-  - 🔜 Relay Ağı Konfigürasyonu — OCI FR + Hetzner DE topoloji (Oturum 1.36)
-- Oturum: 1.35 → Sonraki: 1.36
+  - ✅ Relay Ağı Konfigürasyonu — MultiPathConn + UDP echo probe (Oturum 1.36)
+  - 🔜 Terraform Relay Provisioning — OCI ARM + Hetzner Cloud (Oturum 1.37)
+- Oturum: 1.36 → Sonraki: 1.37
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.36 — Relay Ağı Konfigürasyonu (Sprint 14.2 — RUNBOOK §14.2):
-1. deploy/docker/relay-compose.yml — OCI FR + Hetzner DE relay Docker Compose
-2. pkg/relay/ veya cmd/nabu-relay: relay discovery / path-id atama
-   - Her relay'in PathStats.ID'si = relay index (0=FR, 1=DE, ...)
-   - MultiPathConn: scheduler + quic-go connection pool
-3. Basit ping/latency ölçümü: RTT → PathStats.RTT besleme
-4. PROTOCOL.md v2.5: §25 Relay Network Architecture
+Oturum 1.37 — Terraform ile Relay Provisioning (RUNBOOK §15.1-15.3):
+1. deploy/terraform/oci/ — OCI ARM instance (Fransa / İngiltere)
+2. deploy/terraform/hetzner/ — Hetzner Cloud ARM (Falkenstein)
+3. deploy/terraform/modules/nabu-relay/ — ortak relay modülü
+4. Çıktı: relay IP'leri + otomatik nabu config
+5. PROTOCOL.md v2.6: §26 Terraform Relay Provisioning
 ```
+
+## Oturum 1.36 Özeti
+- pkg/multipath/conn.go: MultiPathConn path lifecycle manager
+  * RelayEndpoint + PingOptions structs
+  * Background UDP echo probe loop (probe_port = relay_port + 1000)
+  * Start/Stop (idempotent), SelectPath, Stats, UpdateStats
+  * deriveProbeAddr: port+1000 convention
+  * ctx param blanked (_) — unparam lint fix
+- pkg/multipath/conn_test.go: 13 unit test, hepsi -race ile PASS
+  * Real UDP echo server integration test (ProbeReachable)
+  * Unreachable relay stays unavailable (ProbeUnreachable)
+- deploy/docker/relay-network.yml: multi-relay Docker Compose
+  * nabu-relay-fr (OCI FR, path-id=0, port 7001)
+  * nabu-relay-de (Hetzner DE, path-id=1, port 7002)
+  * nabu-client-mp (NABU_SCHEDULER env selector)
+- docs/PROTOCOL.md: v2.4 → v2.5 — §25 Relay Network Architecture
+- gofmt + golangci-lint: temiz
 
 ## Oturum 1.35 Özeti
 - pkg/multipath/scheduler.go: 4 path-selection scheduler
