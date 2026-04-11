@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 2.4 (Faz 2 — Multipath QUIC Scheduler)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling operational  
+**Version:** 2.5 (Faz 2 — Relay Network Architecture)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -32,7 +32,8 @@
 22. [DPI Statistical Test Framework](#22-dpi-statistical-test-framework)
 23. [nDPI + Suricata Integration Tests](#23-ndpi--suricata-integration-tests)
 24. [Multipath QUIC Scheduler](#24-multipath-quic-scheduler)
-25. [Changelog](#changelog)
+25. [Relay Network Architecture](#25-relay-network-architecture)
+26. [Changelog](#changelog)
 
 ---
 
@@ -1659,6 +1660,73 @@ All 19 tests pass with `-race`.
 
 ---
 
+## 25 Relay Network Architecture
+
+### 25.1 Topology
+
+```
+Client ──┬──> nabu-relay-fr (OCI FR / Marseille,   path-id=0, port 7001)
+         └──> nabu-relay-de (Hetzner DE / Falkenstein, path-id=1, port 7002)
+                   └──> exit-relay → Internet
+```
+
+Each relay runs the NABU relay binary in a Docker container. The client-side
+`MultiPathConn` maintains live `PathStats` for both paths and switches
+automatically based on the active `Scheduler`.
+
+### 25.2 MultiPathConn (`pkg/multipath/conn.go`)
+
+Manages per-path lifecycle: background UDP echo probes, stats update, and
+scheduler-driven path selection.
+
+| Component | Description |
+|-----------|-------------|
+| `RelayEndpoint` | `{ID uint32, Addr string}` — identifies a relay |
+| `PingOptions` | `Interval` (5 s), `Timeout` (2 s), `ProbesPerRound` (3) |
+| `Start(ctx)` | Launch per-path probe goroutines (idempotent) |
+| `Stop()` | Cancel + WaitGroup drain |
+| `SelectPath()` | Scheduler-driven, returns `(int, RelayEndpoint)` |
+| `UpdateStats()` | External push from QUIC ACK callbacks |
+| `Stats()` | Snapshot of current `[]PathStats` |
+
+**Probe port convention:** `probe_port = relay_port + 1000`
+
+UDP echo payload is 8 bytes: `{0x4E, 0x41, 0x42, 0x55, 0x50, 0x52, 0x01, 0x02}`
+(ASCII `NABUPR` + version bytes). A path is marked `Available=true` as soon as
+any probe round succeeds; it stays unavailable if all `ProbesPerRound` probes
+time out.
+
+### 25.3 Docker Compose (`deploy/docker/relay-network.yml`)
+
+Three services on bridge network `nabu-mp-net`:
+
+| Service | Region | Port | Env |
+|---------|--------|------|-----|
+| `nabu-relay-fr` | OCI FR / Marseille | 7001 | `NABU_PATH_ID=0` |
+| `nabu-relay-de` | Hetzner DE / Falkenstein | 7002 | `NABU_PATH_ID=1` |
+| `nabu-client-mp` | client | — | `NABU_SCHEDULER` |
+
+`NABU_SCHEDULER` accepts: `minrtt` \| `blest` \| `redundant` \| `weightedrr`
+
+### 25.4 Test Summary (13 tests, all PASS with `-race`)
+
+| Test | Assertion |
+|------|-----------|
+| `TestDeriveProbeAddr_Basic` | `7001` → `8001` |
+| `TestDeriveProbeAddr_IPv6` | `[::1]:7002` → `[::1]:8002` |
+| `TestDeriveProbeAddr_BadAddr` | error returned for malformed addr |
+| `TestMultiPathConn_InitialStats` | all paths unavailable, RTT=10 s sentinel |
+| `TestMultiPathConn_UpdateStats` | RTT/BW/loss updated, `Available=true` |
+| `TestMultiPathConn_UpdateStats_OutOfRange` | no panic for index −1 or 99 |
+| `TestMultiPathConn_SelectPath_PreferLowRTT` | low-RTT path wins (20 ms < 80 ms) |
+| `TestMultiPathConn_SelectPath_NoneAvailable` | returns −1, empty endpoint |
+| `TestMultiPathConn_SelectPath_Empty` | nil endpoints → −1 |
+| `TestMultiPathConn_ProbeReachable` | real UDP echo server → `Available=true` |
+| `TestMultiPathConn_ProbeUnreachable` | port 59 999 → `Available=false` |
+| `TestMultiPathConn_StartIdempotent` | double `Start` is no-op |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1678,3 +1746,4 @@ All 19 tests pass with `-race`.
 | 2.2 | 1.33 | §22 DPI Statistical Test Framework (KS-test, BucketFrequencyTest, Shannon entropy, 15 unit tests + 7 DPI integration tests) |
 | 2.3 | 1.34 | §23 nDPI + Suricata Docker integration tests (ndpiReader v4.2 TLS classification, Suricata 8.0.4 zero-alert assertion, 4 new tests; pure-Go PCAP writer) |
 | 2.4 | 1.35 | §24 Multipath QUIC Scheduler (MinRTT+EWMA, BLEST HoL-blocking, Redundant, WeightedRR; 19 unit tests) |
+| 2.5 | 1.36 | §25 Relay Network Architecture (MultiPathConn UDP echo probe, relay-network.yml OCI FR + Hetzner DE topology, 13 tests) |
