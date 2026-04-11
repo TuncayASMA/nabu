@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.33 (Tamamlandı — commit 40e2d3b)
+Oturum: 1.34 (Tamamlandı — commit a8f3edc)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -20,19 +20,38 @@ Oturum: 1.33 (Tamamlandı — commit 40e2d3b)
   - ✅ Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
   - ✅ Governor Adaptif Hız Kontrolcüsü (Oturum 1.32)
   - ✅ Phantom DPI İstatistiksel Testler — KS-test, BucketFrequency, Shannon (Oturum 1.33)
-  - 🔜 nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
-- Oturum: 1.33 → Sonraki: 1.34
+  - ✅ nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
+  - 🔜 Multipath QUIC — mp-quic-go scheduler (Oturum 1.35)
+- Oturum: 1.34 → Sonraki: 1.35
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.34 — nDPI / Suricata Docker DPI Entegrasyon Testi (Sprint 13.2):
-1. docker-compose ile nDPI/Suricata container başlat
-2. test/dpi/ndpi_test.go — Phantom trafiği ndpcapd'ye aktar, protokol sınıflandırmasını oku
-   - Beklenti: "HTTPS" veya "TLS" sınıflandırması (DPI bypass doğrulama)
-3. test/dpi/suricata_test.go — Suricata PCAP analizi
-   - Beklenti: sıfır alert (Emerging Threats kuralları aktif)
-4. PROTOCOL.md v2.3: §22.5 nDPI + Suricata test sonuçları (§22 altına)
+Oturum 1.35 — Multipath QUIC Scheduler (Sprint 14 — RUNBOOK §14.1):
+1. go get github.com/quic-go/quic-go (zaten mevcut)
+2. pkg/multipath/scheduler.go — MinRTT path seçici
+   - PathStats struct: RTT, bandwidth, loss rate
+   - Scheduler interface: SelectPath(paths []PathStats) int
+   - MinRTTScheduler: en düşük RTT, EWMA smoothing
+   - WeightedRRScheduler: round-robin + bandwidth ağırlıkları
+3. pkg/multipath/scheduler_test.go — birim testler
+4. PROTOCOL.md v2.4: §24 Multipath QUIC Scheduler
 ```
+
+## Oturum 1.34 Özeti
+- test/dpi/ndpi_test.go: nDPI protokol sınıflandırma entegrasyon testleri
+  * TestNDPI_TLSClientHello: 5 × TLS 1.3 ClientHello → ndpiReader → "TLS packets:5" — PASS
+  * TestNDPI_PhantomShapedTraffic: 32 KB Phantom-shaped → ndpiReader → "TLS packets:27" — PASS
+  * ndpiReader v4.2.0 (libndpi-bin ARM64 apt paketi, /usr/bin/ndpiReader)
+  * Pure Go PCAP yazıcı: writePcapGlobalHeader, writePcapRecord, buildEthernetFrame, tlsClientHello
+  * DATA RACE düzeltmesi: goroutine-owned collected slice, channel-driven write loop
+- test/dpi/suricata_test.go: Suricata IDS sıfır-alert testi
+  * TestSuricata_ZeroAlertsOnTLS: 27-paket TLS PCAP → 0 Suricata alert — PASS
+  * TestSuricata_PositiveControl: SSH banner → SID 9000003 ateşlendi — PASS
+  * jasonish/suricata:latest Docker v8.0.4 (ARM64), offline PCAP-read modu
+  * 5 özel kural (SID 9000001-9000005): OpenVPN/WireGuard/SSH/Shadowsocks/Tor
+  * eve.json ayrıştırma: event_type="alert" varlığı kontrolü
+- docs/PROTOCOL.md: v2.3 — §23 nDPI + Suricata Integration Tests, Changelog 2.3 eklendi
+- Tüm testler PASS: 11/11 test/dpi + tüm paketler
 
 ## Oturum 1.33 Özeti
 - pkg/phantom/stat/ks.go: DPI istatistiksel test araçları
