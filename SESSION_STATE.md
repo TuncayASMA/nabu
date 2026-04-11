@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.29 (Tamamlandı — commit 5dcbacf)
+Oturum: 1.30 (Tamamlandı — commit dbb7ce3)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -16,21 +16,36 @@ Oturum: 1.29 (Tamamlandı — commit 5dcbacf)
   - ✅ Salamander UDP obfuscation AES-256-GCM (Oturum 1.27)
   - ✅ Probe defense + aktif prob savunması (Oturum 1.28)
   - ✅ QUIC/H3 transport — QUICServer + QUICLayer (Oturum 1.29)
-  - 🔜 JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
-- Oturum: 1.29 → Sonraki: 1.30
+  - ✅ JA3/JA4 parmak izi normalizasyonu (Oturum 1.30)
+  - 🔜 Micro-Phantom Trafik Profil Motoru (Oturum 1.31)
+- Oturum: 1.30 → Sonraki: 1.31
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.30 — JA3/JA4 TLS Parmak İzi Normalizasyonu:
-1. pkg/obfuscation/ja3_normalizer.go: TLS ClientHello yapısını düzenle
-   - uTLS ile cipher suite permütasyonu — DPI parmak izini kıl
-   - Extension sırasını normalize et (Chrome/Firefox profilleri)
-   - ECH (Encrypted Client Hello) desteği ekle
-2. pkg/obfuscation/utls_dialer.go: uTLS dialer'ı JA3 normalizasyonuyla entegre et
-3. Unit testler: JA3 parmak izi doğrulama
-4. PROTOCOL.md v1.9: §19 JA3/JA4 Fingerprint Normalization
-Alternatif: Oturum 1.30 — Micro-Phantom Trafik Profil Motoru (Sprint 10)
+Oturum 1.31 — Micro-Phantom Trafik Profil Motoru (Sprint 10):
+1. pkg/phantom/profiles/ dizini oluştur
+   - web_browsing.json: web browse trafik profili
+   - youtube_sd.json: YouTube SD stream profili
+   - instagram_feed.json: Instagram feed profili
+2. pkg/phantom/shaper/shaper.go: Token bucket tabanlı trafik şekillendirici
+   - TrafficProfile struct: PacketSizeDist, IATDist, BurstPattern, SessionDuration
+   - Shape(conn net.Conn) — trafik şekillendir, profil davranışını yansıt
+3. Unit testler: Profil yükleme, token bucket, şekillendirici
+4. PROTOCOL.md v2.0: §20 Micro-Phantom Traffic Profile Engine
 ```
+
+## Oturum 1.30 Özeti
+- pkg/obfuscation/ja3_normalizer.go: JA3/JA4 TLS parmak izi normalizasyonu
+  * Profile tipi: Chrome133/Firefox120/Edge85/Random
+  * ComputeJA3String/CipherString/Hash (GREASE RFC 8701 dışlama)
+  * isGREASEValue: (v&0x0f0f==0x0a0a)&&(v>>8==v&0xff) doğru implementasyon
+  * Firefox JA3 hash deterministik: 7fbdc1beb9b27dfb24f94e3a7f2112af
+  * Chrome cipher string deterministik (uTLS ShuffleChromeTLSExtensions sadece extension sırası)
+  * UTLSDialNormalized: tarayıcı profil TLS handshake yardımcısı
+- pkg/obfuscation/ja3_normalizer_test.go: 20 test
+  * GREASE, profiller, cipher string, hash, dial testleri
+  * Random profil: HelloRandomized uyumsuzluğu tolerant test
+- docs/PROTOCOL.md: v1.9 — §19 JA3/JA4 Fingerprint Normalization, Changelog eklendi
 
 ## Oturum 1.29 Özeti
 - pkg/relay/quic_server.go: QUICServer — QUIC/TLS-1.3 listener, NABU frames over
