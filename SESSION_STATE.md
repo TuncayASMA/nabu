@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-11
-Oturum: 1.34 (Tamamlandı — commit a8f3edc)
+Oturum: 1.35 (Tamamlandı — commit b005492)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -21,21 +21,35 @@ Oturum: 1.34 (Tamamlandı — commit a8f3edc)
   - ✅ Governor Adaptif Hız Kontrolcüsü (Oturum 1.32)
   - ✅ Phantom DPI İstatistiksel Testler — KS-test, BucketFrequency, Shannon (Oturum 1.33)
   - ✅ nDPI / Suricata Docker entegrasyon testi (Oturum 1.34)
-  - 🔜 Multipath QUIC — mp-quic-go scheduler (Oturum 1.35)
-- Oturum: 1.34 → Sonraki: 1.35
+  - ✅ Multipath QUIC Scheduler — MinRTT+BLEST+Redundant+WRR (Oturum 1.35)
+  - 🔜 Relay Ağı Konfigürasyonu — OCI FR + Hetzner DE topoloji (Oturum 1.36)
+- Oturum: 1.35 → Sonraki: 1.36
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.35 — Multipath QUIC Scheduler (Sprint 14 — RUNBOOK §14.1):
-1. go get github.com/quic-go/quic-go (zaten mevcut)
-2. pkg/multipath/scheduler.go — MinRTT path seçici
-   - PathStats struct: RTT, bandwidth, loss rate
-   - Scheduler interface: SelectPath(paths []PathStats) int
-   - MinRTTScheduler: en düşük RTT, EWMA smoothing
-   - WeightedRRScheduler: round-robin + bandwidth ağırlıkları
-3. pkg/multipath/scheduler_test.go — birim testler
-4. PROTOCOL.md v2.4: §24 Multipath QUIC Scheduler
+Oturum 1.36 — Relay Ağı Konfigürasyonu (Sprint 14.2 — RUNBOOK §14.2):
+1. deploy/docker/relay-compose.yml — OCI FR + Hetzner DE relay Docker Compose
+2. pkg/relay/ veya cmd/nabu-relay: relay discovery / path-id atama
+   - Her relay'in PathStats.ID'si = relay index (0=FR, 1=DE, ...)
+   - MultiPathConn: scheduler + quic-go connection pool
+3. Basit ping/latency ölçümü: RTT → PathStats.RTT besleme
+4. PROTOCOL.md v2.5: §25 Relay Network Architecture
 ```
+
+## Oturum 1.35 Özeti
+- pkg/multipath/scheduler.go: 4 path-selection scheduler
+  * MinRTTScheduler: EWMA α=0.125, QUIC RFC 9002 uyumlu, en düşük RTT path seçer
+  * BLESTScheduler: HoL-blocking tahmin, score=RTT/(1-loss)+λ·max(0,queueDepth-50ms)
+  * RedundantScheduler: tüm available path'lara kopyala, MaxCopies sınırı, tek path için MinRTT fallback
+  * WeightedRRScheduler: deficit tabanlı WRR, bandwidth oranları korunur, ZeroBW → 1 byte/s güvenli
+  * Tüm scheduler'lar sync.Mutex ile thread-safe
+- pkg/multipath/scheduler_test.go: 19 unit test, hepsi -race ile PASS
+  * MinRTT: 6 test (seçim/skip/allUnavail/empty/EWMA/single)
+  * BLEST: 5 test (queue/rtt/unavail/allUnavail/loss-adjusted)
+  * Redundant: 4 test (selectAll/maxCopies/delegate/noPaths)
+  * WeightedRR: 4 test (distribution/unavail/allUnavail/zeroBW)
+- docs/PROTOCOL.md: v2.4 — §24 Multipath QUIC Scheduler (MinRTT/BLEST/Redundant/WRR math formulas, test table)
+- gofmt + golangci-lint: temiz (unused field kaldırıldı)
 
 ## Oturum 1.34 Özeti
 - test/dpi/ndpi_test.go: nDPI protokol sınıflandırma entegrasyon testleri
