@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 2.3 (Faz 2 — nDPI + Suricata DPI Integration Tests)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion operational  
+**Version:** 2.4 (Faz 2 — Multipath QUIC Scheduler)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -31,7 +31,8 @@
 21. [Governor Adaptive Rate Controller](#21-governor-adaptive-rate-controller)
 22. [DPI Statistical Test Framework](#22-dpi-statistical-test-framework)
 23. [nDPI + Suricata Integration Tests](#23-ndpi--suricata-integration-tests)
-24. [Changelog](#changelog)
+24. [Multipath QUIC Scheduler](#24-multipath-quic-scheduler)
+25. [Changelog](#changelog)
 
 ---
 
@@ -1570,6 +1571,94 @@ Checksums are zeroed; both nDPI (`-k none` implicit in file mode) and Suricata
 
 ---
 
+## 24 Multipath QUIC Scheduler
+
+The multipath scheduler layer (`pkg/multipath`) provides path-selection
+algorithms for distributing NABU streams across multiple simultaneous network
+paths (e.g., OCI FR + Hetzner DE relays).
+
+### 24.1 PathStats
+
+```go
+type PathStats struct {
+    ID        uint32        // opaque path identifier
+    RTT       time.Duration // smoothed RTT
+    Bandwidth uint64        // estimated bytes/second
+    LossRate  float64       // packet loss fraction [0,1]
+    InFlight  uint64        // unacknowledged bytes on this path
+    Available bool          // path is currently usable
+}
+```
+
+### 24.2 Scheduler Interface
+
+```go
+type Scheduler interface {
+    SelectPath(paths []PathStats) int  // returns index, -1 if none available
+}
+```
+
+All implementations are safe for concurrent use.
+
+### 24.3 MinRTTScheduler
+
+Selects the available path with the lowest EWMA-smoothed RTT.
+Default smoothing factor α = 0.125 (matches QUIC RFC 9002 §A.2).
+
+$$\text{EWMA}_{n} = \text{EWMA}_{n-1} + \alpha \cdot (\text{RTT}_n - \text{EWMA}_{n-1})$$
+
+On ties the lower-indexed path wins (stable ordering).
+
+### 24.4 BLESTScheduler
+
+Blocking Estimation Scheduler (Lim & Ott, 2014).  Penalises paths whose
+estimated queue depth exceeds `blestMaxQueue` (50 ms):
+
+$$\text{score} = \frac{\text{RTT}_{\text{EWMA}}}{1 - \text{LossRate}} + \lambda \cdot \max(0,\; \text{queueDepth} - Q_{\max})$$
+
+where $\text{queueDepth} = \text{InFlight} / \text{Bandwidth}$ (seconds) and
+$\lambda = 1.0$.  The path with the lowest score is selected.
+
+### 24.5 RedundantScheduler
+
+Duplicates critical frames across all available paths (up to `MaxCopies`).
+Exposes both `SelectPath` (tie-breaks via embedded MinRTT) and
+`SelectAllPaths` returning all available path indices.
+
+### 24.6 WeightedRRScheduler
+
+Deficit-based weighted round-robin.  Each path is credited
+$\text{bandwidth}_i / \sum \text{bandwidth}_j$ per scheduling round;
+the path with the highest accumulated credit is chosen and debited 1.0.
+
+### 24.7 Test Summary
+
+| Test | Scheduler | Assertion |
+|------|-----------|-----------|
+| `TestMinRTT_SelectsLowestRTT` | MinRTT | Index with smallest RTT wins |
+| `TestMinRTT_SkipsUnavailable` | MinRTT | Unavailable paths excluded |
+| `TestMinRTT_AllUnavailable` | MinRTT | Returns -1 |
+| `TestMinRTT_EmptyPaths` | MinRTT | Returns -1 for nil input |
+| `TestMinRTT_EWMASmooths` | MinRTT | EWMA converges after 20 rounds |
+| `TestMinRTT_SinglePath` | MinRTT | Returns 0 for single path |
+| `TestBLEST_SelectsLowQueuePath` | BLEST | High-queue path penalised |
+| `TestBLEST_FallbackToMinRTTWhenQueuesEqual` | BLEST | Low RTT wins when queues equal |
+| `TestBLEST_SkipsUnavailable` | BLEST | Unavailable paths excluded |
+| `TestBLEST_AllUnavailable` | BLEST | Returns -1 |
+| `TestBLEST_LossAdjustedRTT` | BLEST | 90% loss path loses to 30ms clean path |
+| `TestRedundant_SelectAllPaths` | Redundant | All available indices returned |
+| `TestRedundant_MaxCopiesCaps` | Redundant | Capped at MaxCopies=2 |
+| `TestRedundant_SelectPathDelegatesToPrimary` | Redundant | Primary MinRTT used |
+| `TestRedundant_NoPaths` | Redundant | Empty/nil edge cases |
+| `TestWeightedRR_HighBandwidthWinsMore` | WRR | 3:1 bandwidth → ~75:25 split in 400 rounds |
+| `TestWeightedRR_SkipsUnavailable` | WRR | Always selects available path |
+| `TestWeightedRR_AllUnavailable` | WRR | Returns -1 |
+| `TestWeightedRR_ZeroBandwidth` | WRR | Treats 0 BW as 1 byte/s (no panic) |
+
+All 19 tests pass with `-race`.
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1588,3 +1677,4 @@ Checksums are zeroed; both nDPI (`-k none` implicit in file mode) and Suricata
 | 2.1 | 1.32 | §21 Governor Adaptive Rate Controller (/proc/net/dev, TimeOfDayCoeff cosine curve, Recommendation channel, non-eBPF Faz-2 version) |
 | 2.2 | 1.33 | §22 DPI Statistical Test Framework (KS-test, BucketFrequencyTest, Shannon entropy, 15 unit tests + 7 DPI integration tests) |
 | 2.3 | 1.34 | §23 nDPI + Suricata Docker integration tests (ndpiReader v4.2 TLS classification, Suricata 8.0.4 zero-alert assertion, 4 new tests; pure-Go PCAP writer) |
+| 2.4 | 1.35 | §24 Multipath QUIC Scheduler (MinRTT+EWMA, BLEST HoL-blocking, Redundant, WeightedRR; 19 unit tests) |
