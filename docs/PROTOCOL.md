@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.2 (Faz 2 — DPI Statistical Test Framework)  
+**Version:** 2.3 (Faz 2 — nDPI + Suricata DPI Integration Tests)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -30,7 +30,8 @@
 20. [Micro-Phantom Traffic Profile Engine](#20-micro-phantom-traffic-profile-engine)
 21. [Governor Adaptive Rate Controller](#21-governor-adaptive-rate-controller)
 22. [DPI Statistical Test Framework](#22-dpi-statistical-test-framework)
-23. [Changelog](#changelog)
+23. [nDPI + Suricata Integration Tests](#23-ndpi--suricata-integration-tests)
+24. [Changelog](#changelog)
 
 ---
 
@@ -1514,6 +1515,61 @@ degenerate or stripped traffic.
 
 ---
 
+## 23 nDPI + Suricata Integration Tests
+
+### 23.1 nDPI Classification (`test/dpi/ndpi_test.go`)
+
+Traffic is written as a PCAP file (pure Go, no CGO) and analysed offline by
+`ndpiReader` (libndpi-bin ≥ 4.2, ARM64 apt package):
+
+| Test | Input | Expected classification |
+|------|-------|------------------------|
+| `TestNDPI_TLSClientHello` | 5 × TLS 1.3 ClientHello packets (port 443) | TLS |
+| `TestNDPI_PhantomShapedTraffic` | 32 KB Phantom-shaped data wrapped as TLS AppData | TLS |
+
+PCAP packets are hand-crafted in Go (Ethernet + IPv4 + TCP, checksums=0 accepted
+by nDPI in file mode).  Skip condition: `ndpiReader` not present in PATH.
+
+### 23.2 Suricata Zero-Alert Test (`test/dpi/suricata_test.go`)
+
+Suricata 8.x runs via `jasonish/suricata:latest` Docker image in offline
+PCAP-read mode (`-r`).  Five local rules (SID 9000001–9000005) check for
+OpenVPN, WireGuard, SSH, Shadowsocks, and Tor patterns.
+
+| Test | Assertion |
+|------|----------|
+| `TestSuricata_ZeroAlertsOnTLS` | 27-packet Phantom TLS pcap → **0 alerts** |
+| `TestSuricata_PositiveControl` | SSH banner packet → SID 9000003 fires (rule set verified) |
+
+Skip condition: `jasonish/suricata` image not present on local Docker daemon.
+
+### 23.3 Custom Suricata Rule Set
+
+```
+SID 9000001 — OpenVPN P_CONTROL_HARD_RESET_CLIENT_V2 (byte 0x38)
+SID 9000002 — WireGuard handshake (byte 0x01, port 51820)
+SID 9000003 — SSH banner "SSH-" (port 22)
+SID 9000004 — Shadowsocks on port 8388
+SID 9000005 — SOCKS5 proxy greeting on Tor port 9050
+```
+
+### 23.4 PCAP Construction (pure Go)
+
+No third-party PCAP library (no CGO, no gopacket) is required.  Frames are
+built manually:
+
+```
+writePcapGlobalHeader() — 24-byte PCAP file header (magic=0xa1b2c3d4, linktype=1)
+writePcapRecord()       — 16-byte per-record header + frame bytes
+buildEthernetFrame()    — Ethernet (14 B) + IPv4 (20 B) + TCP (20 B) + payload
+tlsClientHello()        — TLS 1.3 ContentType=0x16, HandshakeType=0x01, SNI=example.com
+```
+
+Checksums are zeroed; both nDPI (`-k none` implicit in file mode) and Suricata
+(`-k none` flag) skip checksum validation, so frames parse correctly.
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1531,3 +1587,4 @@ degenerate or stripped traffic.
 | 2.0 | 1.31 | §20 Micro-Phantom Traffic Profile Engine (web_browsing/youtube_sd/instagram_feed CDF profiles, token-bucket shaper, GenerateIdle cover traffic) |
 | 2.1 | 1.32 | §21 Governor Adaptive Rate Controller (/proc/net/dev, TimeOfDayCoeff cosine curve, Recommendation channel, non-eBPF Faz-2 version) |
 | 2.2 | 1.33 | §22 DPI Statistical Test Framework (KS-test, BucketFrequencyTest, Shannon entropy, 15 unit tests + 7 DPI integration tests) |
+| 2.3 | 1.34 | §23 nDPI + Suricata Docker integration tests (ndpiReader v4.2 TLS classification, Suricata 8.0.4 zero-alert assertion, 4 new tests; pure-Go PCAP writer) |
