@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 2.1 (Faz 2 — Governor Adaptive Rate Controller)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay operational  
+**Version:** 2.2 (Faz 2 — DPI Statistical Test Framework)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -29,7 +29,8 @@
 19. [JA3/JA4 Fingerprint Normalization](#19-ja3ja4-fingerprint-normalization)
 20. [Micro-Phantom Traffic Profile Engine](#20-micro-phantom-traffic-profile-engine)
 21. [Governor Adaptive Rate Controller](#21-governor-adaptive-rate-controller)
-22. [Changelog](#changelog)
+22. [DPI Statistical Test Framework](#22-dpi-statistical-test-framework)
+23. [Changelog](#changelog)
 
 ---
 
@@ -1439,6 +1440,80 @@ type Recommendation struct {
 
 ---
 
+---
+
+## 22. DPI Statistical Test Framework
+
+The Micro-Phantom shaper must produce traffic that is statistically
+indistinguishable from the declared `TrafficProfile` CDF. Two complementary
+tests are provided in `pkg/phantom/stat/` and `test/dpi/`.
+
+### 22.1 Kolmogorov-Smirnov Test (`KSTest`)
+
+The one-sample KS test compares an empirical distribution against a reference
+CDF. The implementation uses the asymptotic Kolmogorov distribution to derive
+a p-value:
+
+```
+D   = max|F_empirical(x) − F_reference(x)|  over all observed x
+t   = D · √n
+p   ≈ 2 · Σ_{k=1}^{∞} (−1)^{k−1} · exp(−2k²t²)
+```
+
+A p-value > 0.05 indicates that the sample is compatible with the reference
+CDF at the 5 % significance level.  The series converges in ≤ 20 terms for
+all practical values of D and n.
+
+The reference CDF is evaluated via piecewise-linear interpolation over the
+20-bucket profile CDF. This is suitable for the KS test on **continuous**
+distributions (e.g., IAT from `SampleIATMs`).
+
+### 22.2 Bucket Frequency Test (`BucketFrequencyTest`)
+
+For the **discrete** packet-size distribution (output of `SamplePacketSize`),
+an empirical KS test is prone to systematic over-rejection because the sampler
+returns values within fixed integer buckets rather than a truly continuous
+range.  The `BucketFrequencyTest` function avoids this by comparing per-bucket
+observed probability against expected probability with a configurable relative
+tolerance (default 60 %):
+
+```
+For each bucket i:
+    expected_p[i] = CDF[i] − CDF[i−1]
+    observed_p[i] = count(sample in bucket i) / total
+    PASS if |observed_p[i] − expected_p[i]| / expected_p[i] ≤ tolerance
+         or expected_p[i] < 0.01 (skip sparse buckets)
+```
+
+### 22.3 Shannon Entropy
+
+The `ShannonEntropy` function computes the binary (base-2) Shannon entropy of
+a byte stream:
+
+```
+H = −Σ_{b=0}^{255} p(b) · log₂(p(b))
+```
+
+For AES-GCM ciphertext, H ≈ 8 bits/byte.  For unencrypted but shaped data
+through a `Shaper` (which pads and reorders but does not encrypt), H is
+typically 5–7 bits/byte depending on payload distribution.  A minimum
+threshold of 3 bits/byte is asserted in the integration test to detect
+degenerate or stripped traffic.
+
+### 22.4 Test Inventory
+
+| Package | Test | What is verified |
+|---------|------|------------------|
+| `pkg/phantom/stat` | `TestKSTest_SameDistribution` | p > 0.05 for n=500 uniform sample vs uniform CDF |
+| `pkg/phantom/stat` | `TestKSTest_DifferentDistribution` | p < 0.05 when sample is constant (all 0.99) |
+| `pkg/phantom/stat` | `TestBucketFrequencyTest_Uniform` | bucket counts within 50% of expected for uniform |
+| `pkg/phantom/stat` | `TestShannonEntropy_Random` | H ≥ 7.8 bits for pseudo-random bytes |
+| `test/dpi` | `TestProfile_*_PacketSizeDist` | 3 built-in profiles: bucket frequency within 60% |
+| `test/dpi` | `TestProfile_*_IATDist` | 3 built-in profiles: IAT bucket frequency within 60% |
+| `test/dpi` | `TestPhantomShaper_ShannonEntropy` | 32 KB shaped data: H ≥ 3.0 bits/byte |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1455,3 +1530,4 @@ type Recommendation struct {
 | 1.9 | 1.30 | §19 JA3/JA4 Fingerprint Normalization (uTLS Chrome133/Firefox120/Edge85/Random profiles) |
 | 2.0 | 1.31 | §20 Micro-Phantom Traffic Profile Engine (web_browsing/youtube_sd/instagram_feed CDF profiles, token-bucket shaper, GenerateIdle cover traffic) |
 | 2.1 | 1.32 | §21 Governor Adaptive Rate Controller (/proc/net/dev, TimeOfDayCoeff cosine curve, Recommendation channel, non-eBPF Faz-2 version) |
+| 2.2 | 1.33 | §22 DPI Statistical Test Framework (KS-test, BucketFrequencyTest, Shannon entropy, 15 unit tests + 7 DPI integration tests) |
