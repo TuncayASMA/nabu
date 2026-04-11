@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.8 (Faz 2 — Governor Karar Motoru)  
+**Version:** 2.9 (Faz 2 — FEC Katmanı)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -36,7 +36,8 @@
 26. [Terraform Relay Provisioning](#26-terraform-relay-provisioning)
 27. [eBPF Governor](#27-ebpf-governor)
 28. [Governor Decision Engine](#28-governor-decision-engine)
-29. [Changelog](#changelog)
+29. [FEC Katmanı](#29-fec-katmanı)
+30. [Changelog](#changelog)
 
 ---
 
@@ -1946,6 +1947,72 @@ Default `IATSpikeThreshold = 3.0`.  On a spike:
 
 ---
 
+## 29 FEC Katmanı
+
+### 29.1 Mimari Genel Bakış
+
+Reed-Solomon FEC (10 data + 3 parity shard) tünel trafiğini burst paket kaybına
+karşı korur. `Codec` ham paket gruplarını shard frame'lerine kodlar; `Grouper` gelen
+paketleri 50 ms son teslim tarihi ile toplu olarak işler.
+
+### 29.2 Sabitler ve Tipler (`pkg/fec/codec.go`)
+
+| Sabit | Değer | Açıklama |
+|-------|-------|----------|
+| `DefaultDataShards` | 10 | Grup başına data shard sayısı |
+| `DefaultParityShards` | 3 | Parity shard sayısı (%30 ek yük) |
+| `HeaderSize` | 5 byte | FECHeader kablo boyutu |
+| `maxShardBytes` | 64 KiB | Maksimum shard payload |
+| `GroupFlushTimeout` | 50 ms | Grup accumülasyon süresi |
+
+Frame formatı: `GroupID(3B) | ShardIdx(1B) | NumData(1B) | uint16-len | payload`
+
+```go
+type FECHeader struct {
+    GroupID  uint32 // 24-bit grup sayacı
+    ShardIdx uint8  // 0..TotalShards-1
+    NumData  uint8  // dataShards değeri
+}
+
+type Codec struct { /* dataShards, parityShards, rs, pool */ }
+func NewCodec(dataShards, parityShards int) (*Codec, error)
+func (c *Codec) Encode(groupID uint32, packets [][]byte) ([][]byte, error)
+func (c *Codec) Reconstruct(shards [][]byte) ([][]byte, error)
+```
+
+### 29.3 Grouper (`pkg/fec/grouper.go`)
+
+- `Add(pkt)`: paket kopyası ile thread-safe enqueue
+- `SetRatio(r)`: DecisionEngine'den canlı FECRatio güncellemesi
+- Grup: `DataShards` paket dolduğunda veya 50 ms timeout sonrası flush edilir
+- `Run(ctx, inCh)`: goroutine tabanlı pipeline entegrasyonu
+
+### 29.4 DecisionEngine Entegrasyonu
+
+`DecisionEngine.FECRatio` → `Grouper.SetRatio(ratio)` — ağ koşullarına otomatik adaptasyon.
+
+### 29.5 Test Özeti (15 test, `-race` ile PASS)
+
+| Test | Doğrulanan Davranış |
+|------|---------------------|
+| `TestNewCodec_DefaultShards` | DataShards=10, ParityShards=3, TotalShards=13 |
+| `TestNewCodec_InvalidShards` | 0 shard için hata |
+| `TestReedSolomonEncode10_3` | 10→13 frame üretimi |
+| `TestReedSolomonRecoverFrom3Lost` | 3 shard kaybından kurtarma |
+| `TestReedSolomonRecoverMoreThanParityFails` | >3 kayıpta hata |
+| `TestFECOverhead` | Ek yük ≤ %32 |
+| `TestHeaderEncodeDecode` | FECHeader round-trip |
+| `TestEncodePartialGroup` | Eksik data shard zero-pad |
+| `TestEncodeTooManyPackets` | dataShards aşımında hata |
+| `TestReconstructWrongShardCount` | Yanlış shard sayısında hata |
+| `TestGrouper_FlushOnFull` | DataShards paket → anında flush |
+| `TestGrouper_FlushOnTimeout` | 50 ms sonunda partial flush |
+| `TestGrouper_ManualFlush` | `Flush()` zorla boşaltma |
+| `TestGrouper_SetRatio` | Ratio güncelleme, panic yok |
+| `TestGrouper_GroupIDIncrement` | Ardışık gruplar monoton artar |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1969,3 +2036,4 @@ Default `IATSpikeThreshold = 3.0`.  On a spike:
 | 2.6 | 1.37 | §26 Terraform Relay Provisioning (nabu-relay module, OCI ARM64 Ampere A1 + Hetzner CAX11 ARM64, cloud-init bootstrap, sensitive secret handling) |
 | 2.7 | 1.38 | §27 eBPF Governor (TC clsact hook, ring buffer IAT events, stub/real backend interface, 13 unit tests) |
 | 2.8 | 1.39 | §28 Governor Decision Engine (100ms loop, PhantomRate+SchedulerBias+FECRatio+BurstMode, IAT spike detection EWMA, SnapshotProvider interface, 14 unit tests) |
+| 2.9 | 1.40 | §29 FEC Katmanı (RS 10+3 shards, FECHeader 5B, Codec Encode/Reconstruct, Grouper 50ms flush timer, SetRatio live update, 15 unit tests) |

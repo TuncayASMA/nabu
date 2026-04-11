@@ -14,6 +14,8 @@ require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/cilium/ebpf v0.21.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/klauspost/reedsolomon v1.13.3 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
