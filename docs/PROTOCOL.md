@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.6 (Faz 2 — Terraform Relay Provisioning)  
+**Version:** 2.7 (Faz 2 — eBPF Governor)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -34,7 +34,8 @@
 24. [Multipath QUIC Scheduler](#24-multipath-quic-scheduler)
 25. [Relay Network Architecture](#25-relay-network-architecture)
 26. [Terraform Relay Provisioning](#26-terraform-relay-provisioning)
-27. [Changelog](#changelog)
+27. [eBPF Governor](#27-ebpf-governor)
+28. [Changelog](#changelog)
 
 ---
 
@@ -1811,6 +1812,69 @@ After apply, copy `nabu_config_snippet` outputs into the client `nabu.toml` `[[r
 
 ---
 
+## 27 eBPF Governor
+
+### 27.1 Architecture
+
+The eBPF Governor supplements the existing `/proc/net/dev` based Governor
+with kernel-space packet telemetry via TC clsact hooks.
+
+### 27.2 Kernel Program (`pkg/governor/ebpf/bpf/nabu_monitor.c`)
+
+| Map | Type | Description |
+|-----|------|-------------|
+| `nabu_counters` | `ARRAY[2]` | Per-direction {packets, bytes} |
+| `nabu_last_ts` | `PERCPU_ARRAY[2]` | Per-CPU last timestamp for IAT |
+| `nabu_events` | `RINGBUF 4 MiB` | IAT event stream |
+
+Event struct: `{ts_ns u64, iat_ns u64, pkt_len u32, direction u8, pad[3]}`
+
+Build (requires clang):
+
+```bash
+go generate ./pkg/governor/ebpf/
+```
+
+### 27.3 Go Wrapper (`pkg/governor/ebpf/`)
+
+| File | Purpose |
+|------|---------|
+| `monitor.go` | Monitor type, monitorImpl interface, Start/Stop/Events/Snapshot |
+| `impl_stub.go` | No-op backend (active without clang/eBPF) |
+| `impl_linux_real.go` | Real backend (`//go:build ignore` until bpf2go generated) |
+
+`Monitor.Start(ctx)` spawns two goroutines: ring buffer reader + 500ms counter poller.
+`Monitor.Stop()` cancels context, waits for WaitGroup drain, then calls `impl.close()`.
+
+### 27.4 Backend Selection
+
+| Condition | Backend |
+|-----------|---------|
+| clang + bpf2go generated | `realImpl` (TCX attach, ring buffer reader) |
+| No clang / non-Linux / CI | `stubImpl` (all-zero counters, no events) |
+
+`IsStub() bool` reports which backend is active.
+
+### 27.5 Test Summary (13 tests, all PASS with `-race`)
+
+| Test | Assertion |
+|------|-----------|
+| `TestMonitor_NewMonitor` | NewMonitor returns non-nil |
+| `TestMonitor_StartStop` | Start+Stop cycle no error |
+| `TestMonitor_StartIdempotent` | double Start is no-op |
+| `TestMonitor_StopWithoutStart` | Stop without Start is no-op |
+| `TestMonitor_SnapshotZero` | stub counters stay at zero |
+| `TestMonitor_SnapshotTimestamp` | Snapshot.At in [before, after] |
+| `TestMonitor_EventsChannel` | Events() non-nil channel |
+| `TestMonitor_EventsChannelNoLeakAfterStop` | goroutine terminates cleanly |
+| `TestIsStub` | IsStub() == true |
+| `TestDirection_Constants` | Ingress=0, Egress=1 |
+| `TestSnapshot_Fields` | struct field access compiles |
+| `TestEvent_Fields` | Event struct field access |
+| `TestMonitor_CancelContext` | parent ctx cancel → Stop works |
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -1832,3 +1896,4 @@ After apply, copy `nabu_config_snippet` outputs into the client `nabu.toml` `[[r
 | 2.4 | 1.35 | §24 Multipath QUIC Scheduler (MinRTT+EWMA, BLEST HoL-blocking, Redundant, WeightedRR; 19 unit tests) |
 | 2.5 | 1.36 | §25 Relay Network Architecture (MultiPathConn UDP echo probe, relay-network.yml OCI FR + Hetzner DE topology, 13 tests) |
 | 2.6 | 1.37 | §26 Terraform Relay Provisioning (nabu-relay module, OCI ARM64 Ampere A1 + Hetzner CAX11 ARM64, cloud-init bootstrap, sensitive secret handling) |
+| 2.7 | 1.38 | §27 eBPF Governor (TC clsact hook, ring buffer IAT events, stub/real backend interface, 13 unit tests) |
