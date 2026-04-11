@@ -2,8 +2,8 @@
 # Bu dosyayı her oturum başında oku, her oturum sonunda güncelle.
 
 ## Son Güncelleme
-Tarih: 2026-04-11
-Oturum: 1.39 (Tamamlandı — commit 003117f)
+Tarih: 2026-04-12
+Oturum: 1.40 (Tamamlandı — commit 0c71ccc)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -26,12 +26,13 @@ Oturum: 1.39 (Tamamlandı — commit 003117f)
   - ✅ Terraform Relay Provisioning — OCI ARM64 + Hetzner CAX11 (Oturum 1.37)
   - ✅ eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
   - ✅ Governor Karar Motoru — eBPF entegrasyonu + karar döngüsü (Oturum 1.39)
-  - 🔜 FEC Katmanı — XOR/Reed-Solomon kodlayıcı + DecisionEngine entegrasyonu (Oturum 1.40)
-- Oturum: 1.39 → Sonraki: 1.40
+  - ✅ FEC Katmanı — Reed-Solomon 10+3, Codec+Grouper+15 test (Oturum 1.40)
+  - 🔜 UDP Transport — paket sıralama + sliding window yeniden birleştirme (Oturum 1.41)
+- Oturum: 1.40 → Sonraki: 1.41
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.40 — FEC Katmanı (Sprint 18.3-19 — RUNBOOK §19):
+Oturum 1.41 — FEC Katmanı (Sprint 18.3-19 — RUNBOOK §19):
 1. pkg/fec/ — Forward Error Correction katmanı
    - XOR-based FEC encoder/decoder (Reed-Solomon 2x2 baseline)
    - FECLayer: Wrap/Unwrap frame, ratio → how many redundant packets
