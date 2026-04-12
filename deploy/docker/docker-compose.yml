@@ -35,7 +35,6 @@ services:
     command:
       - "--listen=:${NABU_RELAY_PORT:-7000}"
       - "--psk=${NABU_PSK}"
-      - "--rate-limit=100"
     networks:
       - nabu-net
 
