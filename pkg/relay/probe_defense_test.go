@@ -16,7 +16,7 @@ type fakeConn struct {
 	remoteAddr net.Addr
 }
 
-func newFakeConn(data string, remoteAddr string) *fakeConn {
+func newFakeConn(data string) *fakeConn {
 	return &fakeConn{
 		ReadBuffer: bufio.NewReader(strings.NewReader(data)),
 		remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345},
@@ -41,7 +41,7 @@ func (f *fakeConn) SetWriteDeadline(time.Time) error { return nil }
 
 func TestProbeDefenseDecoyIndex(t *testing.T) {
 	pd := NewProbeDefense()
-	conn := newFakeConn("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n", "127.0.0.1:9999")
+	conn := newFakeConn("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 	pd.HandleProbe(conn, conn.ReadBuffer)
 
 	resp := string(conn.Written)
@@ -58,7 +58,7 @@ func TestProbeDefenseDecoyIndex(t *testing.T) {
 
 func TestProbeDefenseDecoyAbout(t *testing.T) {
 	pd := NewProbeDefense()
-	conn := newFakeConn("GET /about HTTP/1.1\r\nHost: example.com\r\n\r\n", "127.0.0.1:9999")
+	conn := newFakeConn("GET /about HTTP/1.1\r\nHost: example.com\r\n\r\n")
 	pd.HandleProbe(conn, conn.ReadBuffer)
 
 	resp := string(conn.Written)
@@ -69,7 +69,7 @@ func TestProbeDefenseDecoyAbout(t *testing.T) {
 
 func TestProbeDefenseDecoyBlog(t *testing.T) {
 	pd := NewProbeDefense()
-	conn := newFakeConn("GET /blog HTTP/1.1\r\nHost: example.com\r\n\r\n", "127.0.0.1:9999")
+	conn := newFakeConn("GET /blog HTTP/1.1\r\nHost: example.com\r\n\r\n")
 	pd.HandleProbe(conn, conn.ReadBuffer)
 
 	resp := string(conn.Written)
@@ -81,7 +81,7 @@ func TestProbeDefenseDecoyBlog(t *testing.T) {
 func TestProbeDefenseNonHTTPSilentClose(t *testing.T) {
 	pd := NewProbeDefense()
 	// Binary garbage — not HTTP.
-	conn := newFakeConn("\x00\x01\x02\x03\xff\xfe", "127.0.0.1:9999")
+	conn := newFakeConn("\x00\x01\x02\x03\xff\xfe")
 	pd.HandleProbe(conn, conn.ReadBuffer)
 
 	// Should write nothing — silent close.

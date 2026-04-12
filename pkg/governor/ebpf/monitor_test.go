@@ -151,6 +151,15 @@ func TestEvent_Fields(t *testing.T) {
 		PktLen:      1500,
 		Direction:   nabuebpf.Egress,
 	}
+	if ev.TimestampNS == 0 {
+		t.Error("TimestampNS should be set")
+	}
+	if ev.IATNS == 0 {
+		t.Error("IATNS should be set")
+	}
+	if ev.PktLen == 0 {
+		t.Error("PktLen should be set")
+	}
 	if ev.Direction != nabuebpf.Egress {
 		t.Errorf("unexpected direction: %v", ev.Direction)
 	}
