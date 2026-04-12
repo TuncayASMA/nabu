@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"io"
 	"log/slog"
 	"testing"
@@ -32,6 +33,9 @@ func TestApplyObfsTLSOptions_HTTPConnect(t *testing.T) {
 	if h.RelayTLSConfig == nil {
 		t.Fatal("RelayTLSConfig should be set")
 	}
+	if h.RelayTLSConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("MinVersion mismatch: got=%d want=%d", h.RelayTLSConfig.MinVersion, tls.VersionTLS13)
+	}
 	if !h.RelayTLSConfig.InsecureSkipVerify {
 		t.Fatal("InsecureSkipVerify should follow flag")
 	}
@@ -53,6 +57,9 @@ func TestApplyObfsTLSOptions_WebSocket(t *testing.T) {
 
 	if w.TLSConfig == nil {
 		t.Fatal("TLSConfig should be set")
+	}
+	if w.TLSConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("MinVersion mismatch: got=%d want=%d", w.TLSConfig.MinVersion, tls.VersionTLS13)
 	}
 	if w.TLSConfig.InsecureSkipVerify {
 		t.Fatal("InsecureSkipVerify should be false")
@@ -84,4 +91,35 @@ func TestApplyObfsTLSOptions_UnsupportedLayer(t *testing.T) {
 	d := &dummyLayer{}
 	applyObfsTLSOptions(d, true, true, true, "random", testLogger(), "none")
 	// no panic = success for unsupported layer path
+}
+
+func TestApplyObfsTLSOptions_TLSWithoutUTLS(t *testing.T) {
+	h, err := obfuscation.NewHTTPConnect("127.0.0.1:9999", "")
+	if err != nil {
+		t.Fatalf("NewHTTPConnect: %v", err)
+	}
+
+	applyObfsTLSOptions(h, true, false, false, "chrome", testLogger(), obfuscation.ModeHTTPConnect)
+
+	if h.RelayTLSConfig == nil {
+		t.Fatal("RelayTLSConfig should be set when TLS enabled")
+	}
+	if h.UTLSEnabled {
+		t.Fatal("UTLSEnabled should remain false when utls disabled")
+	}
+	if h.UTLSFingerprint != "" {
+		t.Fatalf("UTLSFingerprint should remain empty, got=%q", h.UTLSFingerprint)
+	}
+}
+
+func TestApplyObfsTLSOptions_NilLoggerNoPanic(t *testing.T) {
+	h, err := obfuscation.NewHTTPConnect("127.0.0.1:9999", "")
+	if err != nil {
+		t.Fatalf("NewHTTPConnect: %v", err)
+	}
+
+	applyObfsTLSOptions(h, true, true, true, "chrome", nil, obfuscation.ModeHTTPConnect)
+	if h.RelayTLSConfig == nil {
+		t.Fatal("RelayTLSConfig should still be applied with nil logger")
+	}
 }

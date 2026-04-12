@@ -25,25 +25,31 @@ func applyObfsTLSOptions(layer transport.Layer, enabled, insecure, utlsEnabled b
 			l.UTLSEnabled = true
 			l.UTLSFingerprint = fingerprint
 		}
-		log.Info("relay TLS etkin",
-			slog.Bool("insecure", insecure),
-			slog.Bool("utls", utlsEnabled),
-			slog.String("fingerprint", fingerprint),
-		)
+		if log != nil {
+			log.Info("relay TLS etkin",
+				slog.Bool("insecure", insecure),
+				slog.Bool("utls", utlsEnabled),
+				slog.String("fingerprint", fingerprint),
+			)
+		}
 	case *obfuscation.WebSocketLayer:
 		l.TLSConfig = tlsCfg
 		if utlsEnabled {
 			l.UTLSEnabled = true
 			l.UTLSFingerprint = fingerprint
 		}
-		log.Info("relay WSS etkin",
-			slog.Bool("insecure", insecure),
-			slog.Bool("utls", utlsEnabled),
-			slog.String("fingerprint", fingerprint),
-		)
+		if log != nil {
+			log.Info("relay WSS etkin",
+				slog.Bool("insecure", insecure),
+				slog.Bool("utls", utlsEnabled),
+				slog.String("fingerprint", fingerprint),
+			)
+		}
 	default:
-		log.Warn("--obfs-tls bu obfuscation modunda desteklenmiyor; göz ardı ediliyor",
-			slog.String("mode", obfsMode),
-		)
+		if log != nil {
+			log.Warn("--obfs-tls bu obfuscation modunda desteklenmiyor; göz ardı ediliyor",
+				slog.String("mode", obfsMode),
+			)
+		}
 	}
 }
