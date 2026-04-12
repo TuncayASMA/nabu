@@ -3,10 +3,10 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-12
-Oturum: 1.42 (Devam ediyor — commit 4b85014)
+Oturum: 1.42 (Devam ediyor — commit 06cb47d)
 
 ## Mevcut Faz / Sprint / Oturum
-- Faz: 2 — QUIC Maskeleme + Obfuscation Layer
+- Faz: 3 — Çok Yollu Relay + eBPF Governor + DNS/Network Stack
 - Sprint: 10-13 — Micro-Phantom + DPI Test + Governor
   - ✅ HTTPConnect obfuscation layer (Oturum 1.21-1.22)
   - ✅ TCPServer TLS wrapping (Oturum 1.23)
@@ -54,6 +54,34 @@ Oturum 1.42 — Reliable UDP Entegrasyon (Sprint 4.4+):
   * `da44283` fix(tunnel): handle closed ack channel in ack wait
   * `d47dc7f` fix(tunnel): close ack channel on relay reader exit
   * `4b85014` fix(tunnel): make ack enqueue non-blocking with drop metrics
+  * `06cb47d` test(tunnel): cover retry backoff success and exhaustion paths
+
+## Faz 3 DNS Başlangıç Güncellemesi
+- pkg/dns eklendi: Labyrinth sidecar odaklı güvenli DNS yapılandırma katmanı
+  * Protokoller: `doh`, `doh3`, `dot`
+  * `Config.Validate()` ile protocol/server/listen/timeout doğrulaması
+  * `RenderLabyrinthConfig()` ile güvenli YAML üretimi (`yaml.v3` marshal)
+  * `LeakPreventionRules()` ile IPv4 ve opsiyonel IPv6 DNS sızıntı engelleme kuralları
+- pkg/config genişletildi:
+  * `ClientConfig.DNS` alanı eklendi
+  * `BuildDNSConfig()` ile tek kaynaklı DNS config inşası
+- cmd/nabu-client genişletildi:
+  * `--dns-secure`, `--dns-block-ipv6`, `--dns-protocol`, `--dns-server`, `--dns-listen`, `--dns-metrics`, `--dns-timeout`
+  * başlangıçta DNS özet/log yüzeyi eklendi
+- deploy/docker:
+  * `dns.docker-compose.yml` eklendi
+  * `labyrinth.yaml` örnek sidecar config eklendi
+- Testler:
+  * `pkg/dns/client_test.go` ile validate/render/rules/summary kapsaması
+  * Tam test paketi PASS
+
+## Bir Sonraki Oturum İlk Görevi
+```
+Oturum 1.43 — Faz 3 DNS Entegrasyon Derinleştirme:
+1. DNS sidecar config üretimini deploy akışına bağla
+2. dns leak e2e shell testi ekle
+3. client tarafında güvenli DNS endpoint kullanımını gerçek tunnel akışına bağla
+```
 
 ## Oturum 1.39 Özeti
 - pkg/governor/decision.go: DecisionEngine — 100ms adaptif kontrol döngüsü

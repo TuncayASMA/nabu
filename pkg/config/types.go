@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
+	"github.com/TuncayASMA/nabu/pkg/dns"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,6 +28,16 @@ type ClientConfig struct {
 	Socks5 struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"socks5"`
+	DNS struct {
+		Enabled    bool     `yaml:"enabled"`
+		BlockIPv6  bool     `yaml:"block_ipv6"`
+		Protocol   string   `yaml:"protocol"`
+		Server     string   `yaml:"server"`
+		Listen     string   `yaml:"listen"`
+		Metrics    string   `yaml:"metrics"`
+		Timeout    string   `yaml:"timeout"`
+		Blocklists []string `yaml:"blocklists"`
+	} `yaml:"dns"`
 	Mode struct {
 		ConfigMode   string `yaml:"config_mode"`
 		WGCompatible bool   `yaml:"wg_compatible"`
@@ -46,6 +58,13 @@ func DefaultClientConfig() ClientConfig {
 	cfg.Relay.Host = DefaultDemoRelayHost
 	cfg.Relay.Port = DefaultDemoRelayPort
 	cfg.Socks5.Listen = "127.0.0.1:1080"
+	cfg.DNS.Enabled = false
+	cfg.DNS.BlockIPv6 = false
+	cfg.DNS.Protocol = "doh"
+	cfg.DNS.Server = "https://dns.quad9.net/dns-query"
+	cfg.DNS.Listen = "127.0.0.1:5353"
+	cfg.DNS.Metrics = "127.0.0.1:9153"
+	cfg.DNS.Timeout = "5s"
 	cfg.Mode.ConfigMode = ConfigModeHybrid
 	cfg.Mode.WGCompatible = true
 	return cfg
@@ -116,5 +135,29 @@ func ValidateClientConfig(cfg ClientConfig) error {
 	if _, err := net.ResolveTCPAddr("tcp", cfg.Socks5.Listen); err != nil {
 		return fmt.Errorf("invalid socks listen address %q: %w", cfg.Socks5.Listen, err)
 	}
+	if cfg.DNS.Enabled {
+		if _, err := BuildDNSConfig(cfg); err != nil {
+			return fmt.Errorf("invalid dns config: %w", err)
+		}
+	}
 	return ValidateConfigMode(cfg.Mode.ConfigMode)
+}
+
+func BuildDNSConfig(cfg ClientConfig) (dns.Config, error) {
+	dnsCfg := dns.DefaultConfig()
+	dnsCfg.Enabled = cfg.DNS.Enabled
+	dnsCfg.BlockIPv6 = cfg.DNS.BlockIPv6
+	dnsCfg.Protocol = cfg.DNS.Protocol
+	dnsCfg.Server = cfg.DNS.Server
+	dnsCfg.ListenAddr = cfg.DNS.Listen
+	dnsCfg.MetricsAddr = cfg.DNS.Metrics
+	dnsCfg.Blocklists = append([]string(nil), cfg.DNS.Blocklists...)
+
+	dnsTimeout, err := time.ParseDuration(cfg.DNS.Timeout)
+	if err != nil {
+		return dns.Config{}, fmt.Errorf("invalid dns timeout %q: %w", cfg.DNS.Timeout, err)
+	}
+	dnsCfg.Timeout = dnsTimeout
+
+	return dnsCfg, dnsCfg.Validate()
 }

@@ -1,0 +1,24 @@
+server:
+  listen_addr: "0.0.0.0:53"
+
+resolver:
+  max_depth: 30
+  qname_minimization: true
+  prefer_ipv4: true
+  dnssec_enabled: true
+  upstream_timeout: "5s"
+
+cache:
+  max_entries: 100000
+  min_ttl: 5
+  max_ttl: 86400
+
+web:
+  enabled: true
+  addr: "0.0.0.0:9153"
+  doh_enabled: true
+  doh3_enabled: false
+  tls_enabled: false
+
+blocklist:
+  enabled: false

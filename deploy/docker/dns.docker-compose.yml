@@ -1,0 +1,20 @@
+services:
+  labyrinth:
+    image: ghcr.io/labyrinthdns/labyrinth:latest
+    container_name: labyrinth
+    restart: unless-stopped
+    # Container-side listener remains 0.0.0.0:53; host-side Nabu client can keep
+    # using 127.0.0.1:5353 as its local secure DNS endpoint.
+    ports:
+      - "5353:53/udp"
+      - "5353:53/tcp"
+      - "9153:9153/tcp"
+    volumes:
+      - ./labyrinth.yaml:/etc/labyrinth/config.yaml:ro
+      - labyrinth-data:/var/lib/labyrinth
+    command:
+      - "--config"
+      - "/etc/labyrinth/config.yaml"
+
+volumes:
+  labyrinth-data:

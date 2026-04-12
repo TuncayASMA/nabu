@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/TuncayASMA/nabu/pkg/config"
 	"github.com/TuncayASMA/nabu/pkg/logger"
@@ -35,6 +36,13 @@ func main() {
 	obfsUTLS := flag.Bool("obfs-utls", false, "TLS parmak izini tarayıcı ile örtüştür (uTLS; --obfs-tls veya --obfs-ws-tls ile birlikte kullanılır)")
 	obfsUTLSFingerprint := flag.String("obfs-utls-fingerprint", "chrome", "uTLS tarayıcı parmak izi: chrome | firefox | safari | edge | golang | random")
 	salamanderPSK := flag.String("salamander-psk", "", "Salamander UDP obfuscation PSK'sı (relay ile aynı olmalı; sadece UDP modunda geçerli)")
+	dnsSecure := flag.Bool("dns-secure", false, "Labyrinth tabanlı güvenli DNS sidecar yapılandırmasını etkinleştir")
+	dnsBlockIPv6 := flag.Bool("dns-block-ipv6", false, "IPv6 DNS sızıntısını da engelle (ip6tables gerektirir)")
+	dnsProtocol := flag.String("dns-protocol", "doh", "Güvenli DNS protokolü: doh | doh3 | dot")
+	dnsServer := flag.String("dns-server", "https://dns.quad9.net/dns-query", "Güvenli DNS upstream sunucusu")
+	dnsListen := flag.String("dns-listen", "127.0.0.1:5353", "Yerel güvenli DNS dinleme adresi")
+	dnsMetrics := flag.String("dns-metrics", "127.0.0.1:9153", "Labyrinth metrics/dashboard adresi")
+	dnsTimeout := flag.Duration("dns-timeout", 5*time.Second, "Güvenli DNS upstream timeout")
 	logLevel := flag.String("log-level", "info", "Log seviyesi: debug | info | warn | error")
 	flag.Parse()
 
@@ -77,6 +85,27 @@ func main() {
 		if setFlags["socks-listen"] {
 			cfg.Socks5.Listen = *socksListen
 		}
+		if setFlags["dns-secure"] {
+			cfg.DNS.Enabled = *dnsSecure
+		}
+		if setFlags["dns-block-ipv6"] {
+			cfg.DNS.BlockIPv6 = *dnsBlockIPv6
+		}
+		if setFlags["dns-protocol"] {
+			cfg.DNS.Protocol = *dnsProtocol
+		}
+		if setFlags["dns-server"] {
+			cfg.DNS.Server = *dnsServer
+		}
+		if setFlags["dns-listen"] {
+			cfg.DNS.Listen = *dnsListen
+		}
+		if setFlags["dns-metrics"] {
+			cfg.DNS.Metrics = *dnsMetrics
+		}
+		if setFlags["dns-timeout"] {
+			cfg.DNS.Timeout = dnsTimeout.String()
+		}
 	}
 
 	cfg.Mode.ConfigMode = *mode
@@ -86,13 +115,34 @@ func main() {
 	}
 
 	relayAddr := fmt.Sprintf("%s:%d", cfg.Relay.Host, cfg.Relay.Port)
+	dnsCfg, err := config.BuildDNSConfig(cfg)
+	if err != nil {
+		log.Error("dns config geçersiz", slog.String("error", err.Error()))
+		os.Exit(2)
+	}
+
 	log.Info("nabu-client başlıyor",
 		slog.String("relay", relayAddr),
 		slog.String("socks", cfg.Socks5.Listen),
+		slog.String("dns", dnsCfg.UpstreamSummary()),
 		slog.String("config", *configPath),
 		slog.String("mode", cfg.Mode.ConfigMode),
 		slog.String("version", version.Version),
 	)
+
+	if dnsCfg.Enabled {
+		rules, rulesErr := dnsCfg.LeakPreventionRules()
+		if rulesErr != nil {
+			log.Error("dns leak prevention kuralları üretilemedi", slog.String("error", rulesErr.Error()))
+			os.Exit(2)
+		}
+		log.Info("güvenli DNS yapılandırması etkin",
+			slog.String("protocol", dnsCfg.Protocol),
+			slog.String("server", dnsCfg.Server),
+			slog.String("listen", dnsCfg.ListenAddr),
+			slog.Int("leak_rules", len(rules)),
+		)
+	}
 
 	if !*serveSocks {
 		return
