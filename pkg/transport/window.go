@@ -62,6 +62,7 @@ func (r *Reassembler) Push(pkt Packet) []Packet {
 }
 
 // SendWindow tracks send timestamps and decides retransmissions via RFC6298-like RTO.
+// Methods are safe for concurrent use.
 type SendWindow struct {
 	mu       sync.Mutex
 	now      func() time.Time
@@ -86,12 +87,15 @@ func NewSendWindow(size int, now func() time.Time) *SendWindow {
 	}
 }
 
+// MarkSent records the current send timestamp for a sequence number.
 func (w *SendWindow) MarkSent(seq uint16) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.sentAt[seq] = w.now()
 }
 
+// UpdateRTTEstimator updates SRTT/RTTVAR and recomputes current RTO using
+// RFC6298-like constants (alpha=1/8, beta=1/4).
 func (w *SendWindow) UpdateRTTEstimator(sample time.Duration) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -118,6 +122,7 @@ func (w *SendWindow) UpdateRTTEstimator(sample time.Duration) {
 	}
 }
 
+// ShouldRetransmit returns true if the sequence's elapsed time exceeds RTO.
 func (w *SendWindow) ShouldRetransmit(seq uint16) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -127,4 +132,26 @@ func (w *SendWindow) ShouldRetransmit(seq uint16) bool {
 		return false
 	}
 	return w.now().Sub(sent) >= w.rto
+}
+
+// Ack removes a sequence from retransmission tracking.
+func (w *SendWindow) Ack(seq uint16) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, ok := w.sentAt[seq]; !ok {
+		return false
+	}
+	delete(w.sentAt, seq)
+	return true
+}
+
+// TrackedSeqs returns a snapshot of sequences currently pending ACK.
+func (w *SendWindow) TrackedSeqs() []uint16 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]uint16, 0, len(w.sentAt))
+	for seq := range w.sentAt {
+		out = append(out, seq)
+	}
+	return out
 }
