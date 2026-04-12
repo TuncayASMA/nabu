@@ -13,6 +13,19 @@ func TestNewUDPClientRejectsEmptyAddress(t *testing.T) {
 	}
 }
 
+func TestNewUDPClientDefaultSocketBuffers(t *testing.T) {
+	c, err := NewUDPClient("127.0.0.1:9999")
+	if err != nil {
+		t.Fatalf("new client failed: %v", err)
+	}
+	if c.ReadBuffer != DefaultUDPSocketBuffer {
+		t.Fatalf("ReadBuffer default mismatch: got=%d want=%d", c.ReadBuffer, DefaultUDPSocketBuffer)
+	}
+	if c.WriteBuffer != DefaultUDPSocketBuffer {
+		t.Fatalf("WriteBuffer default mismatch: got=%d want=%d", c.WriteBuffer, DefaultUDPSocketBuffer)
+	}
+}
+
 func TestUDPClientRequiresConnectBeforeIO(t *testing.T) {
 	c, err := NewUDPClient("127.0.0.1:9999")
 	if err != nil {
@@ -24,6 +37,28 @@ func TestUDPClientRequiresConnectBeforeIO(t *testing.T) {
 	}
 	if _, err := c.ReceiveFrame(); err == nil {
 		t.Fatal("expected receive error when not connected")
+	}
+}
+
+func TestUDPClientConnectWithCustomBuffers(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer pc.Close()
+
+	c, err := NewUDPClient(pc.LocalAddr().String())
+	if err != nil {
+		t.Fatalf("new client failed: %v", err)
+	}
+	defer c.Close()
+
+	// Small custom values keep test portable across environments.
+	c.ReadBuffer = 256 * 1024
+	c.WriteBuffer = 256 * 1024
+
+	if err := c.Connect(); err != nil {
+		t.Fatalf("connect failed with custom buffers: %v", err)
 	}
 }
 

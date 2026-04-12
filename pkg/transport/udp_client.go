@@ -12,6 +12,7 @@ import (
 const (
 	DefaultUDPWriteTimeout = 2 * time.Second
 	DefaultUDPReadTimeout  = 5 * time.Second
+	DefaultUDPSocketBuffer = 4 * 1024 * 1024
 )
 
 type UDPClient struct {
@@ -19,6 +20,8 @@ type UDPClient struct {
 	RelayAddr    string
 	WriteTimeout time.Duration
 	ReadTimeout  time.Duration
+	ReadBuffer   int
+	WriteBuffer  int
 	// SessionKey enables AES-256-GCM frame encryption when set (32 bytes).
 	// Populated after a successful PSK handshake.
 	SessionKey []byte
@@ -51,6 +54,8 @@ func NewUDPClient(relayAddr string) (*UDPClient, error) {
 		RelayAddr:    relayAddr,
 		WriteTimeout: DefaultUDPWriteTimeout,
 		ReadTimeout:  DefaultUDPReadTimeout,
+		ReadBuffer:   DefaultUDPSocketBuffer,
+		WriteBuffer:  DefaultUDPSocketBuffer,
 	}, nil
 }
 
@@ -65,7 +70,20 @@ func (c *UDPClient) Connect() error {
 	}
 	c.mu.Lock()
 	c.conn = conn
+	readBuf := c.ReadBuffer
+	writeBuf := c.WriteBuffer
 	c.mu.Unlock()
+
+	if readBuf > 0 {
+		if err := conn.SetReadBuffer(readBuf); err != nil {
+			return fmt.Errorf("set read buffer failed: %w", err)
+		}
+	}
+	if writeBuf > 0 {
+		if err := conn.SetWriteBuffer(writeBuf); err != nil {
+			return fmt.Errorf("set write buffer failed: %w", err)
+		}
+	}
 	return nil
 }
 
