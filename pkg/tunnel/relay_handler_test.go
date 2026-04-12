@@ -4,11 +4,38 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/TuncayASMA/nabu/pkg/transport"
 )
+
+type sendFrameRecorder struct {
+	mu        sync.Mutex
+	sendCount int
+}
+
+func (r *sendFrameRecorder) SendFrame(transport.Frame) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sendCount++
+	return nil
+}
+
+func (r *sendFrameRecorder) ReceiveFrame() (transport.Frame, error) {
+	return transport.Frame{}, errors.New("not implemented")
+}
+
+func (r *sendFrameRecorder) Close() error {
+	return nil
+}
+
+func (r *sendFrameRecorder) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sendCount
+}
 
 type relayErrLayer struct {
 	recvErr error
@@ -132,5 +159,40 @@ func TestDroppedACKCountIncrements(t *testing.T) {
 
 	if got := DroppedACKCount(); got != start+1 {
 		t.Fatalf("unexpected dropped ack count: got=%d want=%d", got, start+1)
+	}
+}
+
+func TestSendFrameWithRetryEventuallySucceeds(t *testing.T) {
+	rec := &sendFrameRecorder{}
+	ackCh := make(chan uint32, 2)
+	frame := transport.Frame{Seq: 42}
+
+	go func() {
+		// First wait times out at 100ms, then second wait starts with 200ms.
+		// Sending ACK at 120ms keeps a wide margin inside the second window.
+		time.Sleep(120 * time.Millisecond)
+		ackCh <- 42
+	}()
+
+	err := sendFrameWithRetry(rec, frame, ackCh, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected retry success, got error: %v", err)
+	}
+	if got := rec.Count(); got != 2 {
+		t.Fatalf("expected 2 send attempts, got %d", got)
+	}
+}
+
+func TestSendFrameWithRetryTimeoutExhausted(t *testing.T) {
+	rec := &sendFrameRecorder{}
+	ackCh := make(chan uint32, 1)
+	frame := transport.Frame{Seq: 7}
+
+	err := sendFrameWithRetry(rec, frame, ackCh, 5*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error after retries")
+	}
+	if got := rec.Count(); got != maxSendRetries {
+		t.Fatalf("expected %d send attempts, got %d", maxSendRetries, got)
 	}
 }
