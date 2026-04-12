@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -20,11 +22,28 @@ import (
 	"github.com/TuncayASMA/nabu/pkg/version"
 )
 
+func splitHostPort(addr string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, err
+	}
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("port out of range: %d", port)
+	}
+	return host, port, nil
+}
+
 func main() {
 	ver := flag.Bool("version", false, "Sürüm bilgisini göster")
 	configPath := flag.String("config", config.DefaultClientConfigPath, "Istemci config dosya yolu")
+	legacyRelay := flag.String("relay", "", "DEPRECATED: relay host:port (yerine --relay-host ve --relay-port kullanın)")
 	relayHost := flag.String("relay-host", config.DefaultDemoRelayHost, "Demo relay host")
 	relayPort := flag.Int("relay-port", config.DefaultDemoRelayPort, "Demo relay UDP port")
+	legacySocks := flag.String("socks", "", "DEPRECATED: SOCKS dinleme adresi (yerine --socks-listen kullanın)")
 	socksListen := flag.String("socks-listen", "127.0.0.1:1080", "SOCKS5 dinleme adresi")
 	serveSocks := flag.Bool("serve-socks", true, "Lokal SOCKS5 sunucusunu baslat")
 	mode := flag.String("config-mode", config.ConfigModeHybrid, "Config modeli: file-only | flags-only | hybrid")
@@ -76,11 +95,23 @@ func main() {
 	}
 
 	if *mode != config.ConfigModeFileOnly {
+		if setFlags["relay"] {
+			h, p, splitErr := splitHostPort(*legacyRelay)
+			if splitErr != nil {
+				log.Error("geçersiz --relay değeri", slog.String("relay", *legacyRelay), slog.String("error", splitErr.Error()))
+				os.Exit(2)
+			}
+			cfg.Relay.Host = h
+			cfg.Relay.Port = p
+		}
 		if setFlags["relay-host"] {
 			cfg.Relay.Host = *relayHost
 		}
 		if setFlags["relay-port"] {
 			cfg.Relay.Port = *relayPort
+		}
+		if setFlags["socks"] {
+			cfg.Socks5.Listen = *legacySocks
 		}
 		if setFlags["socks-listen"] {
 			cfg.Socks5.Listen = *socksListen

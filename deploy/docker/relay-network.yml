@@ -1,8 +1,9 @@
-# Nabu — Multi-Relay Network Docker Compose
+# Nabu — Relay Network Docker Compose
 #
 # This compose is a local topology helper that brings up two relays and one
-# client. The client currently connects to one selected relay (FR by default)
-# using the current nabu-client CLI.
+# client. With the current nabu-client CLI, the client uses a single selected
+# relay endpoint (FR by default). Secondary relay runs for topology parity and
+# can be switched via RELAY_FR_HOST/RELAY_FR_PORT overrides.
 
 services:
   nabu-relay-fr:
