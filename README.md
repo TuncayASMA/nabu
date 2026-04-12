@@ -9,6 +9,40 @@
 
 NABU, DPI tabanlı engellemelere karşı UDP/QUIC kullanan açık kaynak bir tünel projesidir.
 
+## NABU Nedir?
+
+NABU, istemci tarafında bir SOCKS5 çıkışı açıp trafiği şifreli ve obfuscation destekli
+bir relay hattına taşıyan anti-DPI odaklı bir tünel katmanıdır.
+
+Kısaca akış:
+
+- Uygulama -> yerel SOCKS5
+- SOCKS5 -> NABU istemci
+- NABU istemci -> şifreli/obfuscation relay
+- Relay -> hedef internet çıkışı
+
+## Kimler İçin Uygun?
+
+- DPI/sansür baskısı olan ağlarda erişim sürekliliği isteyen teknik kullanıcılar
+- Kendi relay altyapısını yönetebilen bireyler/ekipler
+- Açık kaynak, denetlenebilir tünel mimarisi tercih eden topluluklar
+
+## Kullanım Şartları
+
+- Yalnızca yerel mevzuata uygun ve yetkili kullanım senaryolarında kullanılmalıdır.
+- Kullanıcı, kendi relay altyapısı ve trafik politikasından sorumludur.
+- Ağ/altyapı kısıtları nedeniyle her ortamda aynı performans beklenmemelidir.
+- Proje aktif geliştirme aşamasındadır; sürüm notları ve CI durumu takip edilmelidir.
+
+## Gereksinimler
+
+- İşletim sistemi: Linux (önerilen)
+- Çalıştırma: Docker Compose veya native Go toolchain
+- Ağ: relay'e UDP erişimi (varsayılan 7000/udp), istemci için 1080/tcp
+- Kimlik: istemci ve relay arasında ortak PSK
+- Opsiyonel: DNS sızıntı önleme için iptables/ip6tables yetkisi
+- Opsiyonel: TLS/WSS/QUIC maskeleri için sertifika ve uygun port/policy ayarları
+
 ## Proje Amacı
 
 - Sansürlü ağlarda güvenilir bağlantı sağlamak
