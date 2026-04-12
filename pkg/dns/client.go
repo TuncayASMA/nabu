@@ -97,8 +97,8 @@ func (c Config) RenderLabyrinthConfig() (string, error) {
 		return "", err
 	}
 	type serverConfig struct {
-		ListenAddr  string `yaml:"listen_addr"`
-		DoTEnabled  bool   `yaml:"dot_enabled,omitempty"`
+		ListenAddr string `yaml:"listen_addr"`
+		DoTEnabled bool   `yaml:"dot_enabled,omitempty"`
 	}
 	type resolverConfig struct {
 		MaxDepth          int    `yaml:"max_depth"`
