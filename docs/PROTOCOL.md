@@ -1,7 +1,7 @@
 # NABU Protocol Specification
 
-**Version:** 2.10 (Faz 2 — Reliable UDP Transport)  
-**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
+**Version:** 2.11 (Faz 2 — Reliable UDP Transport + TLS/uTLS Client Hardening)  
+**Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational; client obfs TLS/uTLS option matrix documented and validated  
 **Module:** `github.com/TuncayASMA/nabu`
 
 ---
@@ -696,6 +696,35 @@ tlsConn, err := tls.Dial("tcp", relayAddr, &tls.Config{
 })
 layer := obfuscation.WrapConn(tlsConn) // transport.Layer with 4-byte length framing
 ```
+
+### nabu-client obfs TLS/uTLS Flag Matrix
+
+`nabu-client` applies relay-side TLS wrapping options through obfuscation-layer
+configuration. This behavior is centralized in `applyObfsTLSOptions(...)` and is
+valid for both `http-connect` and `websocket` layers.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--obfs-tls` | `false` | Enable TLS for the obfuscation leg (client -> relay) |
+| `--obfs-tls-insecure` | `false` | Skip relay cert verification (test/dev only) |
+| `--obfs-tls-server-name` | `""` | Override TLS SNI / hostname for verification |
+| `--obfs-utls-profile` | `""` | Enable uTLS fingerprint (`chrome`, `firefox`, `edge`, `random`) |
+
+Behavior summary:
+
+1. If `--obfs-tls=false`, no TLS config is attached to obfuscation layer.
+2. If `--obfs-tls=true`, TLS config is attached with `MinVersion=tls1.3`.
+3. If `--obfs-utls-profile` is set, client dials relay using uTLS normalized
+   profile (for realistic browser-like ClientHello fingerprinting).
+4. Unsupported obfuscation layers are ignored safely; processing continues
+   without panic.
+
+Integration coverage:
+
+- HTTPConnect + TLS relay + uTLS client dial path is covered by
+  `TestHTTPConnectClientUTLSDial`.
+- Option-application matrix (`http-connect`, `websocket`, disabled mode,
+  TLS-only, nil logger safety) is covered by `obfs_tls_test.go`.
 
 ### Per-stream Traffic Counters
 
@@ -2095,3 +2124,4 @@ Transport katmanında aşağıdaki sınıflar test edildi:
 | 2.8 | 1.39 | §28 Governor Decision Engine (100ms loop, PhantomRate+SchedulerBias+FECRatio+BurstMode, IAT spike detection EWMA, SnapshotProvider interface, 14 unit tests) |
 | 2.9 | 1.40 | §29 FEC Katmanı (RS 10+3 shards, FECHeader 5B, Codec Encode/Reconstruct, Grouper 50ms flush timer, SetRatio live update, 15 unit tests) |
 | 2.10 | 1.41 | §30 Reliable UDP Transport (packet format + CRC32, MTU-safe fragmentation, sliding window + RTO, ReliableSession ACK/retransmit/reassembly, RunIO orchestration, UDP socket buffer tuning) |
+| 2.11 | 1.42 | §13 update: nabu-client obfs TLS/uTLS flag matrix documented (`--obfs-tls`, `--obfs-tls-insecure`, `--obfs-tls-server-name`, `--obfs-utls-profile`); helper-based option application + integration/unit coverage reflected |
