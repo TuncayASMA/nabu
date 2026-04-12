@@ -254,3 +254,25 @@ func TestReliableSession_RunReceiver_ReportsNonTimeoutError(t *testing.T) {
 	}
 	close(done)
 }
+
+func TestReliableSession_RunIO_StopsOnDone(t *testing.T) {
+	fio := &fakePacketIO{}
+	s := NewReliableSession(fio, time.Now)
+	out := make(chan Packet, 1)
+	done := make(chan struct{})
+
+	stopped := make(chan struct{})
+	go func() {
+		s.RunIO(done, out)
+		close(stopped)
+	}()
+
+	close(done)
+
+	select {
+	case <-stopped:
+		// expected
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("RunIO did not stop after done close")
+	}
+}

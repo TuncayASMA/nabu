@@ -238,6 +238,24 @@ func (s *ReliableSession) RunReceiver(ctxDone <-chan struct{}, out chan<- Packet
 	}
 }
 
+// RunIO starts both retransmit and receiver loops and blocks until ctxDone.
+func (s *ReliableSession) RunIO(ctxDone <-chan struct{}, out chan<- Packet) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		s.Run(ctxDone)
+	}()
+
+	go func() {
+		defer wg.Done()
+		s.RunReceiver(ctxDone, out)
+	}()
+
+	wg.Wait()
+}
+
 func (s *ReliableSession) reportError(err error) {
 	s.mu.Lock()
 	h := s.onError
