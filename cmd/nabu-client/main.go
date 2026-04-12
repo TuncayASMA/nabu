@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -113,32 +112,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// When --obfs-tls is set, attach a TLS config to the obfuscation layer so
-	// the client-to-relay TCP connection is wrapped in TLS.
-	if *obfsTLS && obfsLayer != nil {
-		tlsCfg := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: *obfsTLSInsecure, //nolint:gosec // opt-in flag
-		}
-		switch l := obfsLayer.(type) {
-		case *obfuscation.HTTPConnect:
-			l.RelayTLSConfig = tlsCfg
-			if *obfsUTLS {
-				l.UTLSEnabled = true
-				l.UTLSFingerprint = *obfsUTLSFingerprint
-			}
-			log.Info("relay TLS etkin", slog.Bool("insecure", *obfsTLSInsecure), slog.Bool("utls", *obfsUTLS), slog.String("fingerprint", *obfsUTLSFingerprint))
-		case *obfuscation.WebSocketLayer:
-			l.TLSConfig = tlsCfg
-			if *obfsUTLS {
-				l.UTLSEnabled = true
-				l.UTLSFingerprint = *obfsUTLSFingerprint
-			}
-			log.Info("relay WSS etkin", slog.Bool("insecure", *obfsTLSInsecure), slog.Bool("utls", *obfsUTLS), slog.String("fingerprint", *obfsUTLSFingerprint))
-		default:
-			log.Warn("--obfs-tls bu obfuscation modunda desteklenmiyor; göz ardı ediliyor", slog.String("mode", *obfsMode))
-		}
-	}
+	applyObfsTLSOptions(obfsLayer, *obfsTLS, *obfsTLSInsecure, *obfsUTLS, *obfsUTLSFingerprint, log, *obfsMode)
 
 	var layer transport.Layer
 	if obfsLayer != nil {
