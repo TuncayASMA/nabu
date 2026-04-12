@@ -22,9 +22,10 @@ Group=nabu
 EnvironmentFile=/etc/nabu/client.env
 
 ExecStart=/usr/local/bin/nabu-client \
-    --relay=${NABU_RELAY_ADDR} \
+    --relay-host=${NABU_RELAY_HOST} \
+    --relay-port=${NABU_RELAY_PORT:-7000} \
     --psk=${NABU_PSK} \
-    --socks=${NABU_SOCKS_LISTEN:-127.0.0.1:1080}
+    --socks-listen=${NABU_SOCKS_LISTEN:-127.0.0.1:1080}
 
 Restart=on-failure
 RestartSec=5s

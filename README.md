@@ -67,6 +67,13 @@ make build-all
 ```bash
 make test
 make test-race
+
+# Faz 2 + Faz 3 kapıları
+make phase2-close
+make dns-e2e
+
+# Canlı öncesi tüm kapılar (preflight + test + build)
+make rollout-live
 ```
 
 ## Katkı

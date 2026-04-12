@@ -61,6 +61,12 @@ jobs:
       - name: Integration Tests (race detector)
         run: go test -v -race -timeout 120s ./test/integration/...
 
+      - name: Phase Gates (E2E smoke)
+        run: |
+          chmod +x test/e2e/phase2_closure_test.sh test/e2e/dns_leak_test.sh
+          ./test/e2e/phase2_closure_test.sh
+          ./test/e2e/dns_leak_test.sh
+
       - name: Coverage check
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')

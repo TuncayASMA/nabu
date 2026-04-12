@@ -4,14 +4,14 @@
 #   NABU_PSK        — Pre-shared key for AES-256-GCM encryption (required)
 #   NABU_RELAY_PORT — UDP port the relay listens on (default: 7000)
 #   NABU_SOCKS_PORT — TCP port the SOCKS5 proxy listens on (default: 1080)
-#   NABU_RELAY_ADDR — Relay address as seen by the client (default: relay:7000)
+#   NABU_RELAY_HOST — Relay host as seen by the client (default: relay)
 #
 # Usage:
 #   cp .env.example .env   # fill in NABU_PSK
 #   docker compose up -d
 #
 # To run relay only   (on the server):   docker compose up -d nabu-relay
-# To run client only  (on the device):   NABU_RELAY_ADDR=host:7000 docker compose up -d nabu-client
+# To run client only  (on the device):   NABU_RELAY_HOST=host NABU_RELAY_PORT=7000 docker compose up -d nabu-client
 
 services:
   nabu-relay:
@@ -46,14 +46,15 @@ services:
     image: nabu-client:latest
     restart: unless-stopped
     environment:
-      - NABU_RELAY=${NABU_RELAY_ADDR:-relay:7000}
+      - NABU_RELAY_HOST=${NABU_RELAY_HOST:-relay}
       - NABU_PSK=${NABU_PSK:?NABU_PSK is required}
     ports:
       - "${NABU_SOCKS_PORT:-1080}:1080/tcp"
     command:
-      - "--relay=${NABU_RELAY_ADDR:-relay:7000}"
+      - "--relay-host=${NABU_RELAY_HOST:-relay}"
+      - "--relay-port=${NABU_RELAY_PORT:-7000}"
       - "--psk=${NABU_PSK}"
-      - "--socks=:1080"
+      - "--socks-listen=0.0.0.0:1080"
     depends_on:
       - nabu-relay
     networks:

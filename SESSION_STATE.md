@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-12
-Oturum: 1.42 (Devam ediyor — commit 06cb47d)
+Oturum: 1.43 (Devam ediyor)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 3 — Çok Yollu Relay + eBPF Governor + DNS/Network Stack
@@ -29,7 +29,57 @@ Oturum: 1.42 (Devam ediyor — commit 06cb47d)
   - ✅ FEC Katmanı — Reed-Solomon 10+3, Codec+Grouper+15 test (Oturum 1.40)
   - ✅ UDP Transport — packet format + sliding window + ReliableSession + ACK/retransmit (Oturum 1.41)
   - 🔜 UDP Transport Entegrasyon — tunnel/relay veri yolunda reliable katman aktivasyonu (Oturum 1.42)
-- Oturum: 1.42 (in progress)
+- Oturum: 1.43 (in progress)
+
+## Oturum 1.43 Ara Güncelleme
+- Faz 3 DNS e2e başlangıç doğrulaması eklendi:
+  * `test/e2e/dns_leak_test.sh` oluşturuldu
+  * Senaryolar:
+    - güvenli DNS açık (IPv4) -> `leak_rules=2`
+    - güvenli DNS açık + IPv6 blok -> `leak_rules=4`
+    - güvenli DNS kapalı -> `dns=disabled`
+- Script güvenilirlik iyileştirmeleri:
+  * `timeout 30s` ile process hang koruması
+  * `run_client` helper ile çıkış kodu/timeout kontrolü
+  * dış ağ bağımlılığını azaltan test URL'i (`https://dns.example/dns-query`)
+- Doğrulama:
+  * `test/e2e/dns_leak_test.sh` PASS
+  * `go test ./pkg/dns ./cmd/nabu-client` PASS
+
+## Oturum 1.43 Canlıya Alma Otomasyonu
+- Tüm süreçleri tek akışta çalıştıran canlı öncesi kapılar eklendi:
+  * `scripts/prod_preflight.sh` (komut/deploy dosyası/systemd/terraform preflight)
+  * `scripts/prod_rollout.sh` (preflight + vet + race test + Faz 2/3 e2e + build-all + docker build doğrulama)
+- Makefile hedefleri eklendi:
+  * `preflight-live`, `phase2-close`, `dns-e2e`, `rollout-live`
+- CI güncellendi:
+  * `.github/workflows/ci.yml` içinde Faz kapıları (`phase2_closure_test.sh`, `dns_leak_test.sh`) zorunlu adım oldu
+- Doğrulama:
+  * `./scripts/prod_preflight.sh` PASS (terraform yoksa WARN + skip)
+  * `./test/e2e/phase2_closure_test.sh` PASS
+  * `./test/e2e/dns_leak_test.sh` PASS
+
+## Oturum 1.43 Deploy Uyum Düzeltmesi
+- Canlıya alma için kritik CLI uyumu düzeltildi:
+  * `deploy/systemd/nabu-client.service` eski `--relay` / `--socks` flaglerinden
+    `--relay-host` / `--relay-port` / `--socks-listen` flaglerine geçirildi.
+  * `deploy/docker/docker-compose.yml` istemci komutu aynı şekilde güncellendi.
+  * `deploy/systemd/client.env.example` host/port ayrımıyla hizalandı.
+- Preflight güçlendirildi:
+  * `scripts/prod_preflight.sh` içinde `nabu-client.service` flag uyum kontrolü eklendi.
+- Sonuç:
+  * Compose parse PASS
+  * Preflight PASS
+
+## Faz 2 Kapanış Doğrulaması
+- Faz 2 eksikleri operasyonel olarak kapatıldı ve regression kanıtı eklendi.
+- Yeni doğrulama scripti:
+  * `test/e2e/phase2_closure_test.sh`
+- Kapsam:
+  * çekirdek paketler: `pkg/obfuscation`, `pkg/phantom/...`, `pkg/governor`, `pkg/multipath`
+  * entegrasyon testleri: `Test(QUICRelay|WebSocketRelay|HTTPConnect|ProbeDefense)`
+- Sonuç:
+  * `test/e2e/phase2_closure_test.sh` PASS
 
 ## Bir Sonraki Oturum İlk Görevi
 ```

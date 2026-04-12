@@ -1,107 +1,53 @@
 # Nabu — Multi-Relay Network Docker Compose
 #
-# Topology:
-#   Client ──┬──> nabu-relay-fr (OCI FR / Marseille)  ──> exit-relay → Internet
-#            └──> nabu-relay-de (Hetzner DE / Falkenstein) ──> exit-relay → Internet
-#
-# The client uses pkg/multipath MinRTT or BLEST scheduler to select the
-# lower-latency relay for each stream.
-#
-# Required environment variables (set in .env or pass on CLI):
-#   NABU_PSK         — Pre-shared key (AES-256-GCM), shared across all nodes
-#   RELAY_FR_PORT    — UDP port for the FR relay   (default: 7001)
-#   RELAY_DE_PORT    — UDP port for the DE relay   (default: 7002)
-#   NABU_SOCKS_PORT  — SOCKS5 listen port          (default: 1080)
-#
-# Usage (local simulation / CI):
-#   cp .env.example .env
-#   docker compose -f relay-network.yml up -d
-#
-# Production (each Compose runs on its respective host):
-#   OCI FR host:      docker compose -f relay-network.yml up -d nabu-relay-fr
-#   Hetzner DE host:  docker compose -f relay-network.yml up -d nabu-relay-de
-#   Client machine:   RELAY_FR_ADDR=<oci-fr-ip>:7001 RELAY_DE_ADDR=<hetzner-de-ip>:7002 \
-#                     docker compose -f relay-network.yml up -d nabu-client-mp
+# This compose is a local topology helper that brings up two relays and one
+# client. The client currently connects to one selected relay (FR by default)
+# using the current nabu-client CLI.
 
 services:
-
-  # ── OCI Marseille relay (path-id: 0) ────────────────────────────────────
   nabu-relay-fr:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.relay
     image: nabu-relay:latest
     restart: unless-stopped
-    environment:
-      NABU_LISTEN: ":${RELAY_FR_PORT:-7001}"
-      NABU_PSK:    "${NABU_PSK:?NABU_PSK is required}"
-      NABU_PATH_ID: "0"        # path identifier sent to client in HELLO frame
     ports:
       - "${RELAY_FR_PORT:-7001}:7001/udp"
-    deploy:
-      resources:
-        limits:
-          cpus:   "1"
-          memory: 128M
     command:
-      - "--listen=:${RELAY_FR_PORT:-7001}"
-      - "--psk=${NABU_PSK}"
+      - "--listen=:7001"
+      - "--psk=${NABU_PSK:?NABU_PSK is required}"
       - "--rate-limit=100"
     networks:
       - nabu-mp-net
-    labels:
-      nabu.relay.region: "fr-marseille"
-      nabu.relay.path_id: "0"
 
-  # ── Hetzner Falkenstein relay (path-id: 1) ───────────────────────────────
   nabu-relay-de:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.relay
     image: nabu-relay:latest
     restart: unless-stopped
-    environment:
-      NABU_LISTEN: ":${RELAY_DE_PORT:-7002}"
-      NABU_PSK:    "${NABU_PSK:?NABU_PSK is required}"
-      NABU_PATH_ID: "1"
     ports:
       - "${RELAY_DE_PORT:-7002}:7002/udp"
-    deploy:
-      resources:
-        limits:
-          cpus:   "1"
-          memory: 128M
     command:
-      - "--listen=:${RELAY_DE_PORT:-7002}"
-      - "--psk=${NABU_PSK}"
+      - "--listen=:7002"
+      - "--psk=${NABU_PSK:?NABU_PSK is required}"
       - "--rate-limit=100"
     networks:
       - nabu-mp-net
-    labels:
-      nabu.relay.region: "de-falkenstein"
-      nabu.relay.path_id: "1"
 
-  # ── Multipath client (connects to both relays simultaneously) ────────────
   nabu-client-mp:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.client
     image: nabu-client:latest
     restart: unless-stopped
-    environment:
-      NABU_PSK:         "${NABU_PSK:?NABU_PSK is required}"
-      NABU_RELAY_0:     "${RELAY_FR_ADDR:-nabu-relay-fr:7001}"
-      NABU_RELAY_1:     "${RELAY_DE_ADDR:-nabu-relay-de:7002}"
-      NABU_SCHEDULER:   "${NABU_SCHEDULER:-minrtt}"   # minrtt | blest | redundant | weightedrr
-      NABU_SOCKS_PORT:  ":${NABU_SOCKS_PORT:-1080}"
     ports:
       - "${NABU_SOCKS_PORT:-1080}:1080/tcp"
     command:
-      - "--relay=${RELAY_FR_ADDR:-nabu-relay-fr:7001}"
-      - "--relay=${RELAY_DE_ADDR:-nabu-relay-de:7002}"
-      - "--scheduler=${NABU_SCHEDULER:-minrtt}"
-      - "--psk=${NABU_PSK}"
-      - "--socks=:1080"
+      - "--relay-host=${RELAY_FR_HOST:-nabu-relay-fr}"
+      - "--relay-port=${RELAY_FR_PORT:-7001}"
+      - "--psk=${NABU_PSK:?NABU_PSK is required}"
+      - "--socks-listen=0.0.0.0:1080"
     depends_on:
       - nabu-relay-fr
       - nabu-relay-de

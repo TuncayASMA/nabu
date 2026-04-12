@@ -7,7 +7,7 @@ LDFLAGS=-ldflags "-s -w -X $(MODULE)/pkg/version.Version=$(VERSION) -X $(MODULE)
 GOPATH?=$(shell go env GOPATH)
 GOBIN?=$(GOPATH)/bin
 
-.PHONY: all build client relay test test-unit test-race lint fmt vet clean tidy
+.PHONY: all build client relay test test-unit test-race lint fmt vet clean tidy preflight-live rollout-live phase2-close dns-e2e
 
 all: build
 
@@ -80,6 +80,19 @@ run-client:
 ## Docker
 docker-relay:
 	docker build -f deploy/docker/Dockerfile.relay -t nabu-relay:dev .
+
+## Live gates
+preflight-live:
+	bash ./scripts/prod_preflight.sh
+
+phase2-close:
+	bash ./test/e2e/phase2_closure_test.sh
+
+dns-e2e:
+	bash ./test/e2e/dns_leak_test.sh
+
+rollout-live:
+	bash ./scripts/prod_rollout.sh
 
 ## Clean
 clean:
