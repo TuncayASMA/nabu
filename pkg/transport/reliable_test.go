@@ -1,15 +1,23 @@
 package transport
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 )
 
+type fakeTimeoutErr struct{}
+
+func (fakeTimeoutErr) Error() string   { return "timeout" }
+func (fakeTimeoutErr) Timeout() bool   { return true }
+func (fakeTimeoutErr) Temporary() bool { return true }
+
 type fakePacketIO struct {
-	mu   sync.Mutex
-	sent []Packet
-	recv []Packet
+	mu      sync.Mutex
+	sent    []Packet
+	recv    []Packet
+	recvErr []error
 }
 
 func (f *fakePacketIO) SendPacket(p Packet) error {
@@ -22,8 +30,13 @@ func (f *fakePacketIO) SendPacket(p Packet) error {
 func (f *fakePacketIO) ReceivePacket() (Packet, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if len(f.recvErr) > 0 {
+		err := f.recvErr[0]
+		f.recvErr = f.recvErr[1:]
+		return Packet{}, err
+	}
 	if len(f.recv) == 0 {
-		return Packet{}, nil
+		return Packet{}, fakeTimeoutErr{}
 	}
 	p := f.recv[0]
 	f.recv = f.recv[1:]
@@ -34,6 +47,12 @@ func (f *fakePacketIO) queueRecv(pkts ...Packet) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.recv = append(f.recv, pkts...)
+}
+
+func (f *fakePacketIO) queueRecvErr(errs ...error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recvErr = append(f.recvErr, errs...)
 }
 
 func (f *fakePacketIO) sentPackets() []Packet {
@@ -176,4 +195,62 @@ func TestReliableSession_ReceiveAndHandle_AutoACK(t *testing.T) {
 	if sent[0].Seq != 0 {
 		t.Fatalf("expected ack seq=0, got %d", sent[0].Seq)
 	}
+}
+
+func TestReliableSession_RunReceiver_ReassemblesAndEmits(t *testing.T) {
+	fio := &fakePacketIO{}
+	s := NewReliableSession(fio, time.Now)
+
+	out := make(chan Packet, 4)
+	done := make(chan struct{})
+
+	// Out-of-order delivery: seq=1 then seq=0. Receiver should emit 0,1 in order.
+	fio.queueRecv(
+		Packet{Seq: 1, Flags: PacketFlagData, Payload: []byte("b")},
+		Packet{Seq: 0, Flags: PacketFlagData, Payload: []byte("a")},
+	)
+
+	go s.RunReceiver(done, out)
+
+	p1 := <-out
+	p2 := <-out
+	close(done)
+
+	if string(p1.Payload) != "a" || string(p2.Payload) != "b" {
+		t.Fatalf("unexpected payload order: %q then %q", p1.Payload, p2.Payload)
+	}
+
+	acks := fio.sentPackets()
+	if len(acks) < 2 {
+		t.Fatalf("expected at least two ACK packets, got %d", len(acks))
+	}
+	if acks[0].Flags&PacketFlagACK == 0 || acks[1].Flags&PacketFlagACK == 0 {
+		t.Fatalf("expected ACK flags on emitted control packets")
+	}
+}
+
+func TestReliableSession_RunReceiver_ReportsNonTimeoutError(t *testing.T) {
+	fio := &fakePacketIO{}
+	s := NewReliableSession(fio, time.Now)
+
+	done := make(chan struct{})
+	out := make(chan Packet, 1)
+	errCh := make(chan error, 2)
+	s.SetErrorHandler(func(err error) {
+		errCh <- err
+	})
+
+	fio.queueRecvErr(fmt.Errorf("boom"))
+
+	go s.RunReceiver(done, out)
+
+	select {
+	case err := <-errCh:
+		if err == nil || err.Error() != "boom" {
+			t.Fatalf("unexpected error callback payload: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected non-timeout receive error to be reported")
+	}
+	close(done)
 }

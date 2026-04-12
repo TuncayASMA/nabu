@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 )
@@ -200,13 +202,52 @@ func (s *ReliableSession) Run(ctxDone <-chan struct{}) {
 		case <-ticker.C:
 			_, err := s.TickRetransmit()
 			if err != nil {
-				s.mu.Lock()
-				h := s.onError
-				s.mu.Unlock()
-				if h != nil {
-					h(err)
-				}
+				s.reportError(err)
 			}
 		}
 	}
+}
+
+// RunReceiver continuously receives packets, auto-acks DATA frames,
+// reassembles in-order packets and emits them on out.
+// Timeout errors are treated as expected polling behavior and ignored.
+func (s *ReliableSession) RunReceiver(ctxDone <-chan struct{}, out chan<- Packet) {
+	for {
+		select {
+		case <-ctxDone:
+			return
+		default:
+		}
+
+		reassembled, err := s.ReceiveAndHandle()
+		if err != nil {
+			if isTimeoutError(err) {
+				continue
+			}
+			s.reportError(err)
+			continue
+		}
+
+		for _, pkt := range reassembled {
+			select {
+			case <-ctxDone:
+				return
+			case out <- pkt:
+			}
+		}
+	}
+}
+
+func (s *ReliableSession) reportError(err error) {
+	s.mu.Lock()
+	h := s.onError
+	s.mu.Unlock()
+	if h != nil {
+		h(err)
+	}
+}
+
+func isTimeoutError(err error) bool {
+	var nerr net.Error
+	return err != nil && errors.As(err, &nerr) && nerr.Timeout()
 }
