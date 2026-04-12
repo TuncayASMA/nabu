@@ -327,6 +327,8 @@ func pipeConnToRelay(conn net.Conn, client transport.Layer, streamID uint16, ack
 }
 
 func pipeRelayToConn(conn net.Conn, client transport.Layer, streamID uint16, ackCh chan<- uint32, shutdown func(error)) {
+	defer close(ackCh)
+
 	for {
 		frame, err := client.ReceiveFrame()
 		if err != nil {
