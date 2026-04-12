@@ -9,6 +9,7 @@ import (
 type fakePacketIO struct {
 	mu   sync.Mutex
 	sent []Packet
+	recv []Packet
 }
 
 func (f *fakePacketIO) SendPacket(p Packet) error {
@@ -18,7 +19,22 @@ func (f *fakePacketIO) SendPacket(p Packet) error {
 	return nil
 }
 
-func (f *fakePacketIO) ReceivePacket() (Packet, error) { return Packet{}, nil }
+func (f *fakePacketIO) ReceivePacket() (Packet, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.recv) == 0 {
+		return Packet{}, nil
+	}
+	p := f.recv[0]
+	f.recv = f.recv[1:]
+	return p, nil
+}
+
+func (f *fakePacketIO) queueRecv(pkts ...Packet) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recv = append(f.recv, pkts...)
+}
 
 func (f *fakePacketIO) sentPackets() []Packet {
 	f.mu.Lock()
@@ -133,5 +149,31 @@ func TestReliableSession_DropAfterMaxRetries(t *testing.T) {
 	}
 	if re != 0 {
 		t.Fatalf("expected dropped packet after max retries, got retransmit=%d", re)
+	}
+}
+
+func TestReliableSession_ReceiveAndHandle_AutoACK(t *testing.T) {
+	fio := &fakePacketIO{}
+	s := NewReliableSession(fio, time.Now)
+
+	fio.queueRecv(Packet{Seq: 0, Flags: PacketFlagData, Payload: []byte("a")})
+
+	out, err := s.ReceiveAndHandle()
+	if err != nil {
+		t.Fatalf("ReceiveAndHandle: %v", err)
+	}
+	if len(out) != 1 || string(out[0].Payload) != "a" {
+		t.Fatalf("unexpected reassembled output: %+v", out)
+	}
+
+	sent := fio.sentPackets()
+	if len(sent) != 1 {
+		t.Fatalf("expected one auto-ack packet, got %d", len(sent))
+	}
+	if sent[0].Flags&PacketFlagACK == 0 {
+		t.Fatalf("expected ACK flag, got flags=0x%x", sent[0].Flags)
+	}
+	if sent[0].Seq != 0 {
+		t.Fatalf("expected ack seq=0, got %d", sent[0].Seq)
 	}
 }

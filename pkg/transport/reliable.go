@@ -124,6 +124,25 @@ func (s *ReliableSession) HandleIncoming(pkt Packet) ([]Packet, bool) {
 	return out, false
 }
 
+// ReceiveAndHandle reads one packet from I/O, auto-sends ACK for DATA packets,
+// then processes it through HandleIncoming.
+func (s *ReliableSession) ReceiveAndHandle() ([]Packet, error) {
+	pkt, err := s.io.ReceivePacket()
+	if err != nil {
+		return nil, err
+	}
+
+	if pkt.Flags&PacketFlagData != 0 {
+		ack := BuildACK(pkt.Seq, uint32(s.now().Unix())) //nolint:gosec
+		if err := s.io.SendPacket(ack); err != nil {
+			return nil, fmt.Errorf("send ack seq=%d: %w", pkt.Seq, err)
+		}
+	}
+
+	out, _ := s.HandleIncoming(pkt)
+	return out, nil
+}
+
 // TickRetransmit checks all pending packets and retransmits timed-out ones.
 // It returns the number of packets retransmitted in this tick.
 func (s *ReliableSession) TickRetransmit() (int, error) {
