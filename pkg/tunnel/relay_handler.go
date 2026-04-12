@@ -275,7 +275,10 @@ func waitForAckSeq(ackCh <-chan uint32, expectedSeq uint32, timeout time.Duratio
 
 	for {
 		select {
-		case ackSeq := <-ackCh:
+		case ackSeq, ok := <-ackCh:
+			if !ok {
+				return fmt.Errorf("ack channel closed for seq=%d", expectedSeq)
+			}
 			if ackSeq == expectedSeq {
 				return nil
 			}

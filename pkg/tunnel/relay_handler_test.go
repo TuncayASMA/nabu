@@ -23,3 +23,17 @@ func TestWaitForAckSeqTimeout(t *testing.T) {
 		t.Fatal("expected timeout error")
 	}
 }
+
+func TestWaitForAckSeqClosedChannel(t *testing.T) {
+	ackCh := make(chan uint32)
+	close(ackCh)
+
+	start := time.Now()
+	err := waitForAckSeq(ackCh, 55, 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected closed channel error")
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("expected fast return on closed channel, got %s", elapsed)
+	}
+}
