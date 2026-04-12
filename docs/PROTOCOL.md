@@ -1,6 +1,6 @@
 # NABU Protocol Specification
 
-**Version:** 2.9 (Faz 2 — FEC Katmanı)  
+**Version:** 2.10 (Faz 2 — Reliable UDP Transport)  
 **Status:** Reference implementation complete; Faz 2 obfuscation + TLS + Anti-replay + DPI evasion + Multipath scheduling + Relay network + IaC provisioning operational  
 **Module:** `github.com/TuncayASMA/nabu`
 
@@ -37,7 +37,8 @@
 27. [eBPF Governor](#27-ebpf-governor)
 28. [Governor Decision Engine](#28-governor-decision-engine)
 29. [FEC Katmanı](#29-fec-katmanı)
-30. [Changelog](#changelog)
+30. [Reliable UDP Transport](#30-reliable-udp-transport)
+31. [Changelog](#changelog)
 
 ---
 
@@ -2013,6 +2014,62 @@ func (c *Codec) Reconstruct(shards [][]byte) ([][]byte, error)
 
 ---
 
+## 30 Reliable UDP Transport
+
+### 30.1 Packet-Level Wire Format (`pkg/transport/packet.go`)
+
+UDP taşıma katmanı için frame üstünde daha küçük ve MTU-safe bir paket formatı eklendi:
+
+`[2B seq][1B flags][4B timestamp][payload][4B CRC32]`
+
+| Alan | Boyut | Açıklama |
+|------|-------|----------|
+| `seq` | 2 byte | Paket sıralama numarası |
+| `flags` | 1 byte | `DATA`, `ACK`, `FIN`, `KEEPALIVE` |
+| `timestamp` | 4 byte | Gönderici zamanı (uint32) |
+| `payload` | 0..1350 byte | MTU-safe veri alanı |
+| `crc32` | 4 byte | Paket bütünlük doğrulaması |
+
+`MaxUDPPayload = 1350` ile fragmantasyon riski azaltılmıştır.
+
+### 30.2 Sliding Window + RTO (`pkg/transport/window.go`)
+
+- `Reassembler`: out-of-order paketleri buffer'layıp in-order teslim eder
+- `SendWindow`: RFC6298-benzeri SRTT/RTTVAR ile adaptif RTO hesaplar
+- Yardımcılar: `Ack(seq)`, `TrackedSeqs()`
+
+### 30.3 Reliable Session (`pkg/transport/reliable.go`)
+
+`ReliableSession`, `PacketIO` üstünde ACK/retransmit/reassembly davranışını uygular:
+
+- `SendData(payload, ts)` → paket gönder + pending track
+- `HandleIncoming(pkt)` → ACK temizleme + DATA reassembly
+- `TickRetransmit()` → timeout paketleri yeniden gönder
+- `Run(ctxDone)` → periyodik retransmit döngüsü
+- `RunReceiver(ctxDone, out)` → receive + auto-ACK + reassembled output
+- `RunIO(ctxDone, out)` → retransmit ve receiver döngülerini birlikte çalıştırma
+
+Max retry aşıldığında paket pending tablosundan düşürülür (sonsuz retry yok).
+
+### 30.4 UDP Client Geliştirmeleri (`pkg/transport/udp_client.go`)
+
+- Packet-level API: `SendPacket`, `ReceivePacket`
+- `SendPayloadFragments`: MTU-safe chunking + monotonik sequence allocator
+- Eşzamanlılık güvenliği: shared state `RWMutex` ile korundu
+- Soket buffer ayarları: `ReadBuffer` / `WriteBuffer` (varsayılan 4 MiB)
+
+### 30.5 Test Özeti
+
+Transport katmanında aşağıdaki sınıflar test edildi:
+
+- Paket encode/decode, CRC corruption, MTU chunking
+- Sliding window sequencing, duplicate drop, retransmit timeout
+- Reliable session ACK flow, max retry drop, receiver loop davranışı
+- UDP loopback entegrasyonu (ACK round-trip)
+- `-race` ile transport testleri yeşil
+
+---
+
 ## Changelog
 
 | Version | Oturum | Changes |
@@ -2037,3 +2094,4 @@ func (c *Codec) Reconstruct(shards [][]byte) ([][]byte, error)
 | 2.7 | 1.38 | §27 eBPF Governor (TC clsact hook, ring buffer IAT events, stub/real backend interface, 13 unit tests) |
 | 2.8 | 1.39 | §28 Governor Decision Engine (100ms loop, PhantomRate+SchedulerBias+FECRatio+BurstMode, IAT spike detection EWMA, SnapshotProvider interface, 14 unit tests) |
 | 2.9 | 1.40 | §29 FEC Katmanı (RS 10+3 shards, FECHeader 5B, Codec Encode/Reconstruct, Grouper 50ms flush timer, SetRatio live update, 15 unit tests) |
+| 2.10 | 1.41 | §30 Reliable UDP Transport (packet format + CRC32, MTU-safe fragmentation, sliding window + RTO, ReliableSession ACK/retransmit/reassembly, RunIO orchestration, UDP socket buffer tuning) |

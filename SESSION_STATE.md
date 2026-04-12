@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-12
-Oturum: 1.40 (Tamamlandı — commit 0c71ccc)
+Oturum: 1.41 (Tamamlandı — commit 14ab2ac)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -27,18 +27,16 @@ Oturum: 1.40 (Tamamlandı — commit 0c71ccc)
   - ✅ eBPF Governor — TC hook + ring buffer + Go wrapper (Oturum 1.38)
   - ✅ Governor Karar Motoru — eBPF entegrasyonu + karar döngüsü (Oturum 1.39)
   - ✅ FEC Katmanı — Reed-Solomon 10+3, Codec+Grouper+15 test (Oturum 1.40)
-  - 🔜 UDP Transport — paket sıralama + sliding window yeniden birleştirme (Oturum 1.41)
-- Oturum: 1.40 → Sonraki: 1.41
+  - ✅ UDP Transport — packet format + sliding window + ReliableSession + ACK/retransmit (Oturum 1.41)
+  - 🔜 UDP Transport Entegrasyon — tunnel/relay veri yolunda reliable katman aktivasyonu (Oturum 1.42)
+- Oturum: 1.41 → Sonraki: 1.42
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
-Oturum 1.41 — FEC Katmanı (Sprint 18.3-19 — RUNBOOK §19):
-1. pkg/fec/ — Forward Error Correction katmanı
-   - XOR-based FEC encoder/decoder (Reed-Solomon 2x2 baseline)
-   - FECLayer: Wrap/Unwrap frame, ratio → how many redundant packets
-   - DecisionEngine.FECRatio ile entegrasyon
-2. pkg/fec/fec_test.go: unit testler
-3. PROTOCOL.md v2.9: §29 FEC Katmanı
+Oturum 1.42 — Reliable UDP Entegrasyon (Sprint 4.4+):
+1. ReliableSession'i tunnel veri yoluna bağla (send/receive loop entegrasyonu)
+2. ACK ve retransmit davranışını e2e tunnel testiyle doğrula
+3. Relay tarafında packet-level akışa hazırlık/refactor noktalarını tamamla
 ```
 
 ## Oturum 1.39 Özeti
