@@ -3,7 +3,7 @@
 
 ## Son Güncelleme
 Tarih: 2026-04-12
-Oturum: 1.41 (Tamamlandı — commit 14ab2ac)
+Oturum: 1.42 (Devam ediyor — commit 4b85014)
 
 ## Mevcut Faz / Sprint / Oturum
 - Faz: 2 — QUIC Maskeleme + Obfuscation Layer
@@ -29,7 +29,7 @@ Oturum: 1.41 (Tamamlandı — commit 14ab2ac)
   - ✅ FEC Katmanı — Reed-Solomon 10+3, Codec+Grouper+15 test (Oturum 1.40)
   - ✅ UDP Transport — packet format + sliding window + ReliableSession + ACK/retransmit (Oturum 1.41)
   - 🔜 UDP Transport Entegrasyon — tunnel/relay veri yolunda reliable katman aktivasyonu (Oturum 1.42)
-- Oturum: 1.41 → Sonraki: 1.42
+- Oturum: 1.42 (in progress)
 
 ## Bir Sonraki Oturum İlk Görevi
 ```
@@ -38,6 +38,22 @@ Oturum 1.42 — Reliable UDP Entegrasyon (Sprint 4.4+):
 2. ACK ve retransmit davranışını e2e tunnel testiyle doğrula
 3. Relay tarafında packet-level akışa hazırlık/refactor noktalarını tamamla
 ```
+
+## Oturum 1.42 Ara Güncelleme
+- pkg/tunnel: ACK bekleme/akış dayanıklılığı güçlendirildi
+  * `waitForAckSeq`: kapalı ACK kanalında timeout beklemeden hızlı hata dönüşü
+  * `pipeRelayToConn`: çıkışta ACK kanalı kapatma (`defer close(ackCh)`)
+  * ACK enqueue non-blocking hale getirildi (`tryEnqueueACK`)
+  * Dolu ACK kuyruğunda drop görünürlüğü eklendi (`DroppedACKCount`)
+- Test kapsamı genişletildi:
+  * kapalı kanal davranışı
+  * receive-error sonrası ACK kanal kapanışı
+  * non-blocking enqueue ve full-buffer senaryosu
+  * drop counter artışı
+- Commitler:
+  * `da44283` fix(tunnel): handle closed ack channel in ack wait
+  * `d47dc7f` fix(tunnel): close ack channel on relay reader exit
+  * `4b85014` fix(tunnel): make ack enqueue non-blocking with drop metrics
 
 ## Oturum 1.39 Özeti
 - pkg/governor/decision.go: DecisionEngine — 100ms adaptif kontrol döngüsü
