@@ -93,3 +93,44 @@ func TestPipeRelayToConnClosesAckChannelOnReceiveError(t *testing.T) {
 		t.Fatal("expected shutdown callback")
 	}
 }
+
+func TestTryEnqueueACK(t *testing.T) {
+	ackCh := make(chan uint32, 1)
+	if ok := tryEnqueueACK(ackCh, 10); !ok {
+		t.Fatal("expected first enqueue to succeed")
+	}
+	if got := <-ackCh; got != 10 {
+		t.Fatalf("unexpected ack value: got=%d want=10", got)
+	}
+}
+
+func TestTryEnqueueACKFullChannel(t *testing.T) {
+	ackCh := make(chan uint32, 1)
+	ackCh <- 77
+
+	start := time.Now()
+	ok := tryEnqueueACK(ackCh, 88)
+	if ok {
+		t.Fatal("expected enqueue to fail when channel is full")
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("expected non-blocking fast return, got %s", elapsed)
+	}
+	if got := <-ackCh; got != 77 {
+		t.Fatalf("expected original ack to remain, got=%d", got)
+	}
+}
+
+func TestDroppedACKCountIncrements(t *testing.T) {
+	start := DroppedACKCount()
+	ackCh := make(chan uint32, 1)
+	ackCh <- 1
+
+	if ok := tryEnqueueACK(ackCh, 2); ok {
+		t.Fatal("expected enqueue to fail on full channel")
+	}
+
+	if got := DroppedACKCount(); got != start+1 {
+		t.Fatalf("unexpected dropped ack count: got=%d want=%d", got, start+1)
+	}
+}

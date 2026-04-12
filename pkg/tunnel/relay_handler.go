@@ -25,6 +25,13 @@ const (
 )
 
 var nextStreamID uint32
+var droppedACKCount atomic.Uint64
+
+// DroppedACKCount returns how many ACK frames were dropped because the local
+// ACK queue was full.
+func DroppedACKCount() uint64 {
+	return droppedACKCount.Load()
+}
 
 func NewRelayHandler(relayAddr string, psk []byte) socks5.ConnHandler {
 	return NewRelayHandlerWithLayer(relayAddr, psk, nil)
@@ -339,7 +346,7 @@ func pipeRelayToConn(conn net.Conn, client transport.Layer, streamID uint16, ack
 			continue
 		}
 		if frame.Flags&transport.FlagACK != 0 {
-			ackCh <- frame.Ack
+			_ = tryEnqueueACK(ackCh, frame.Ack)
 			continue
 		}
 		if frame.Flags&transport.FlagFIN != 0 {
@@ -362,5 +369,15 @@ func pipeRelayToConn(conn net.Conn, client transport.Layer, streamID uint16, ack
 			shutdown(fmt.Errorf("write to socks connection failed: %w", err))
 			return
 		}
+	}
+}
+
+func tryEnqueueACK(ackCh chan<- uint32, ack uint32) bool {
+	select {
+	case ackCh <- ack:
+		return true
+	default:
+		droppedACKCount.Add(1)
+		return false
 	}
 }
