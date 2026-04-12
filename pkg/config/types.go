@@ -7,8 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/TuncayASMA/nabu/pkg/dns"
 	"gopkg.in/yaml.v3"
+
+	"github.com/TuncayASMA/nabu/pkg/dns"
 )
 
 type RelayConfig struct {
