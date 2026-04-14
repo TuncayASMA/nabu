@@ -142,14 +142,7 @@ Kurulum ve kullanım detayları için [docs/](docs/) klasörüne bakınız.
 ---
 
 
-## Varsayılan Kararlar
-
-- Relay varsayılan UDP portu: `443`
-- Demo relay: `OCI Marseille (fr-mrs-1)`
-- Konfig modeli: `hybrid` (dosya + CLI override)
-- WireGuard uyumluluğu: açık (`--wg-compatible=true`)
-- Organizasyon: İlk dış katkı sonrası `nabu-tunnel` org'a taşınacak
-
+---
 ---
 
 
