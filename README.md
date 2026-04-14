@@ -1,118 +1,203 @@
-# NABU — UDP Tabanlı Anti-DPI Tünel
 
-[![CI](https://github.com/TuncayASMA/nabu/actions/workflows/ci.yml/badge.svg)](https://github.com/TuncayASMA/nabu/actions)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+# NABU — Modern Anti-DPI UDP Tünel Katmanı
 
-![NABU Hero](docs/assets/nabu-hero.svg)
+[![CI](https://github.com/TuncayASMA/nabu/actions/workflows/ci.yml/badge.svg)](https://github.com/TuncayASMA/nabu/actions) [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 
-> **⚠️ Geliştirme aşamasında — henüz production kullanımı için hazır değil.**
+<p align="center">
+	<img src="docs/assets/nabu-hero.svg" width="320" alt="NABU Hero" />
+</p>
 
-NABU, DPI tabanlı engellemelere karşı UDP/QUIC kullanan açık kaynak bir tünel projesidir.
+> **⚠️ Bu proje aktif geliştirme aşamasındadır. Production ortamında kullanmadan önce test ve inceleme yapınız.**
 
-## NABU Nedir?
+NABU, DPI (Deep Packet Inspection) ve sansür mekanizmalarını aşmak için UDP/QUIC tabanlı, şifreli ve obfuscation destekli modern bir tünel katmanıdır. Açık kaynak, denetlenebilir ve topluluk odaklıdır.
 
-NABU, istemci tarafında bir SOCKS5 çıkışı açıp trafiği şifreli ve obfuscation destekli
-bir relay hattına taşıyan anti-DPI odaklı bir tünel katmanıdır.
+---
 
-Kısaca akış:
+## 🚀 Kısa Özet
 
-- Uygulama -> yerel SOCKS5
-- SOCKS5 -> NABU istemci
-- NABU istemci -> şifreli/obfuscation relay
-- Relay -> hedef internet çıkışı
+NABU; masaüstü ve (yolda olan) mobil istemciler için, yerel SOCKS5 proxy üzerinden trafiği şifreli UDP relay sunucularına taşır. Amaç, gerçek internet davranışına yakın trafik üretip DPI engellerini aşmak ve özgür erişimi mümkün kılmaktır.
 
-## Kimler İçin Uygun?
+---
 
-- DPI/sansür baskısı olan ağlarda erişim sürekliliği isteyen teknik kullanıcılar
-- Kendi relay altyapısını yönetebilen bireyler/ekipler
-- Açık kaynak, denetlenebilir tünel mimarisi tercih eden topluluklar
 
-## Kullanım Şartları
+## Temel Akış (Nasıl Çalışır?)
 
-- Yalnızca yerel mevzuata uygun ve yetkili kullanım senaryolarında kullanılmalıdır.
-- Kullanıcı, kendi relay altyapısı ve trafik politikasından sorumludur.
-- Ağ/altyapı kısıtları nedeniyle her ortamda aynı performans beklenmemelidir.
-- Proje aktif geliştirme aşamasındadır; sürüm notları ve CI durumu takip edilmelidir.
+1. **Uygulama** → yerel **SOCKS5 proxy** (NABU Client)
+2. **NABU Client** → şifreli & gizlenmiş UDP/QUIC relay hattı
+3. **Relay sunucu** → hedef internete çıkış
 
-## Gereksinimler
+Kullanıcı uygulamaları (tarayıcı, Telegram, vs.) SOCKS5 üzerinden NABU'ya bağlanır; trafik, DPI engellerini aşacak şekilde relay'e taşınır.
 
-- İşletim sistemi: Linux (önerilen)
-- Çalıştırma: Docker Compose veya native Go toolchain
-- Ağ: relay'e UDP erişimi (varsayılan 7000/udp), istemci için 1080/tcp
-- Kimlik: istemci ve relay arasında ortak PSK
-- Opsiyonel: DNS sızıntı önleme için iptables/ip6tables yetkisi
-- Opsiyonel: TLS/WSS/QUIC maskeleri için sertifika ve uygun port/policy ayarları
+---
+
+
+## Hedef Kullanıcılar & Senaryolar
+
+- Ağında DPI/sansür bulunan ülkelerde/kurumlarda çalışan teknik kullanıcılar
+- Kendi relay altyapısını kurmak isteyen bireyler/ekipler
+- Açık kaynak, denetlenebilir ve topluluk odaklı tünel mimarisi arayanlar
+- Mobilde ve masaüstünde özgür internet erişimi isteyenler
+
+---
+
+
+## Kullanım Şartları & Uyarılar
+
+- Yalnızca yerel mevzuata uygun ve yetkili kullanımda kullanınız.
+- Relay altyapısı ve trafik politikası tamamen kullanıcı sorumluluğundadır.
+- Her ortamda aynı performans garanti edilmez.
+- Aktif geliştirme: Sürüm notları ve CI durumu takip edilmelidir.
+
+---
+
+
+## Sistem Gereksinimleri
+
+- **İşletim sistemi:** Linux (tam destek), macOS/Windows (istemci binary)
+- **Çalıştırma:** Docker Compose veya native Go toolchain
+- **Ağ:** Relay'e UDP erişimi (varsayılan 7000/udp), istemci için 1080/tcp
+- **Kimlik:** Ortak PSK (ön paylaşımlı anahtar)
+- **Opsiyonel:** DNS sızıntı önleme için iptables/ip6tables yetkisi
+- **Opsiyonel:** TLS/WSS/QUIC maskeleri için sertifika ve uygun port/policy
+
+---
+
+
+## Platform Desteği
+
+| Platform      | İstemci | Relay | Durum         |
+|-------------- |---------|-------|--------------|
+| Linux         | ✔️      | ✔️    | Tam destek    |
+| macOS         | ✔️      | —     | Binary (test) |
+| Windows       | ✔️      | —     | Binary (test) |
+| Android/iOS   | 🚧      | —     | Planlandı     |
+
+> Mobilde tam deneyim için platforma özel ağ entegrasyonu (VPN/TUN) gereklidir.
+
+---
+
+
+## Yol Haritası & Evrensel Destek
+
+1. **Desktop stabilizasyonu:**
+   - Windows/macOS istemci smoke testleri (CI)
+   - Platforma özel kurulum paketleri ve dokümantasyon
+2. **Mobil çekirdek:**
+   - Tünel mantığının mobilde yeniden kullanılabilir API'ye ayrılması
+   - Android/iOS için güvenli anahtar yönetimi
+3. **Native mobil istemci:**
+   - Android (Kotlin) ve iOS (Swift) istemci uygulamaları
+   - Network Extension/VPN entegrasyonu
+4. **Operasyonel kalite:**
+   - Desktop/mobile için E2E test havuzu
+   - Pil, ağ geçişi, bağlantı toparlama metrikleri
+
+---
+
 
 ## Proje Amacı
 
-- Sansürlü ağlarda güvenilir bağlantı sağlamak
+- Sansürlü ağlarda güvenilir ve özgür bağlantı sağlamak
 - Trafiği gerçek internet davranışına benzeterek engel riskini düşürmek
 - Topluluk tarafından geliştirilebilen, denetlenebilir bir altyapı sunmak
 
-## Ne Yapacak?
+---
 
-- Yerelde SOCKS5 endpoint sunarak uygulamaları tünele bağlayacak
-- Relay üzerinden şifreli UDP taşıma yapacak
-- DNS sızıntısını önlemek için güvenli DNS taşıma modları sunacak
-- İlerleyen fazlarda DPI tepki analizi ve çok yollu taşıma ekleyecek
 
-## Özellikler (Yol Haritası)
+## Temel Özellikler
 
-- 🔐 AES-256-GCM şifreleme (ARM64 donanım hızlandırmalı)
-- 🌊 Micro-Phantom trafik gizleme (gerçek HTTPS'ten ayırt edilemez)
-- 📦 Reed-Solomon FEC (paket kayıplarında veri kurtarma)
-- 🧅 SOCKS5 proxy arayüzü
-- 🛡️ DNS sızıntı önleme (DoH/3)
-- 🔍 Governor — gerçek zamanlı DPI tespiti
+- Yerelde SOCKS5 endpoint sunar (uygulamalar kolayca bağlanır)
+- Trafiği relay üzerinden şifreli UDP ile taşır
+- DNS sızıntısını önlemek için güvenli DNS taşıma modları
+- DPI tepki analizi ve çok yollu taşıma (yolda)
+
+---
+
+
+## Teknik Özellikler
+
+- 🔐 **AES-256-GCM şifreleme:** ARM64 donanım hızlandırmalı
+- 🌊 **Micro-Phantom trafik gizleme:** Gerçek HTTPS'ten ayırt edilemez
+- 📦 **Reed-Solomon FEC:** Paket kayıplarında veri kurtarma
+- 🧅 **SOCKS5 proxy arayüzü**
+- 🛡️ **DNS sızıntı önleme:** DoH/3
+- 🔍 **Governor:** Gerçek zamanlı DPI tespiti
+
+---
+
 
 ## Hızlı Başlangıç
 
 ```bash
-# Henüz hazır değil — geliştirme devam ediyor
+# Geliştirme aşamasında — test ortamında deneyin
+git clone https://github.com/TuncayASMA/nabu
+cd nabu
+make build
+# veya
 go install github.com/TuncayASMA/nabu/cmd/nabu-client@latest
 ```
+
+Kurulum ve kullanım detayları için [docs/](docs/) klasörüne bakınız.
+
+---
+
 
 ## Varsayılan Kararlar
 
 - Relay varsayılan UDP portu: `443`
-- İlk demo relay lokasyonu: `OCI Marseille (fr-mrs-1)`
-- İstemci konfig modeli: `hybrid` (dosya + CLI override)
+- Demo relay: `OCI Marseille (fr-mrs-1)`
+- Konfig modeli: `hybrid` (dosya + CLI override)
 - WireGuard uyumluluğu: açık (`--wg-compatible=true`)
-- Org planı: şimdilik `TuncayASMA/nabu`, ilk dış katkı + 2 maintainer sonrasında `nabu-tunnel` org'a taşınacak
+- Organizasyon: İlk dış katkı sonrası `nabu-tunnel` org'a taşınacak
 
-## Ne Kadar Detay Yeterli?
+---
 
-GitHub ana sayfasında kısa ve net bilgi yeterlidir.
-Operasyonel ayrıntılar (sunucu topolojisi, saldırı modeli, test metodolojisi) için ayrı dokümanlar kullanılmalıdır.
+
+## Sıkça Sorulanlar (FAQ)
+
+**NABU neden UDP kullanıyor?**
+
+UDP, DPI engellerini aşmak ve gerçek zamanlı trafik benzetimi için TCP'ye göre daha esnektir. QUIC ve UDP tabanlı protokoller, modern DPI sistemlerinde daha zor tespit edilir.
+
+**Relay sunucusu zorunlu mu?**
+
+Evet, kendi relay sunucunuz veya güvendiğiniz bir relay altyapısı gereklidir.
+
+**Mobil istemci ne zaman hazır olacak?**
+
+Yol haritası bölümünde güncel durum paylaşılır. Katkı vermek isteyenler için [CONTRIBUTING.md](docs/CONTRIBUTING.md) yakında eklenecek.
+
+---
+
 
 ## Derleme
 
 ```bash
-git clone https://github.com/TuncayASMA/nabu
-cd nabu
-make build
-
-# Tüm platformlar için
-make build-all
+make build        # Yerel platform için
+make build-all    # Tüm platformlar için
 ```
+
+---
+
 
 ## Testler
 
 ```bash
-make test
-make test-race
-
-# Faz 2 + Faz 3 kapıları
-make phase2-close
-make dns-e2e
-
-# Canlı öncesi tüm kapılar (preflight + test + build)
-make rollout-live
+make test         # Birim testler
+make test-race    # Race condition testi
+make dns-e2e      # DNS E2E testi
+make rollout-live # Preflight + test + build
 ```
+
+---
+
 
 ## Katkı
 
-AGPL-3.0 lisansı altında açık kaynak. Katkılar için [CONTRIBUTING.md](docs/CONTRIBUTING.md) belgesi yakında eklenecek.
+AGPL-3.0 lisansı altında açık kaynak. Katkı ve PR için [CONTRIBUTING.md](docs/CONTRIBUTING.md) (çok yakında).
+
+---
+
 
 ## Lisans
 
